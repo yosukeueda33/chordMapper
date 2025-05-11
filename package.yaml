@@ -21,6 +21,15 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
+- Euterpea
+- random
+- mtl
+- PortMidi
+- deepseq
+- HCodecs
+- unix
+- stm
+- time
 
 ghc-options:
 - -Wall
