@@ -13,6 +13,9 @@ import Data.Time
 import Data.Time.Clock.POSIX
 import System.Random
 import System.Exit 
+import qualified Data.Set as S (Set, insert, empty, delete, null)
+import Codec.Midi (Key)
+import qualified Data.Map as Map
 
 main = do
   hSetBuffering stdout NoBuffering
@@ -30,14 +33,20 @@ mainLoop :: Int -> Int -> IO ()
 mainLoop inDev outDev = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
+    pushingKeys <- newTVarIO S.empty -- :: TVar [AbsPitch]
+    chordMapPre <- newTVarIO Map.empty
+    chordMap <- newTVarIO Map.empty
     stopSig <- newTVarIO False -- stop signal
     putStrLn ("Clearing MIDI Devices...")
     wait 0.5
     handleCtrlC stopSig $ do
       putStrLn ("Initializing MIDI Devices...")
       initializeMidi
-      forkIO (midiInRec (unsafeInputID inDev) inBuf stopSig) -- poll input and add to buffer
+      forkIO (midiInRec (unsafeInputID inDev) inBuf pushingKeys chordMap stopSig) -- poll input and add to buffer
       forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
+      -- forkIO (printPushingKeysLoop pushingKeys stopSig)
+      forkIO (chordMapPreLoop 0 chordMapPre stopSig)
+      forkIO (chordMapLoop pushingKeys chordMapPre chordMap stopSig)
       -- forkIO (genRec genBuf stopSig) -- a generative placeholder
       putStrLn ("MIDI I/O services started.")
       detectExitLoop stopSig -- should only exit this via handleCtrlC
@@ -52,7 +61,34 @@ mainLoop inDev outDev = do
                     wait 0.5 -- give MIDI time to close down
                     putStrLn "Done. Bye!"
                     exitSuccess 
+
+chordMaps :: [(Seconds, Map.Map Key [Key])]
+chordMaps = [ (4.0, Map.fromList [(48, [60, 64, 67])]),
+              (4.0, Map.fromList [(48, [59, 62, 67])])]
     
+chordMapPreLoop :: Int -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
+chordMapPreLoop i chordMapPre stopSignal = do
+    -- wait 0.01
+    stopNow <- readTVarIO stopSignal
+    if stopNow then return () else do
+      let (duration, m) = chordMaps !! i
+      atomically $ writeTVar chordMapPre m 
+      wait duration
+      print $ "changed chord map pre" ++ show m
+      chordMapPreLoop ((i + 1) `mod` length chordMaps) chordMapPre stopSignal
+
+chordMapLoop :: TVar (S.Set Key) ->  TVar (Map.Map Key [Key]) -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
+chordMapLoop pushingKeys chordMapPre chordMap stopSig = do
+    wait 0.01
+    stopNow <- readTVarIO stopSig
+    if stopNow then return () else do
+      pk <- readTVarIO pushingKeys
+      if not (S.null pk) then return () else do
+        atomically $ do
+          cm <- readTVar chordMapPre
+          writeTVar chordMap cm
+          -- lift print $ "changed chord map" ++ show cm
+      chordMapLoop pushingKeys chordMapPre chordMap stopSig
 
 -- Some music that we'll repeat. Think of this as a placeholder for a backing 
 -- track or some other computer accompaniment.
@@ -66,9 +102,9 @@ someMusic = line $ map (note qn) [60,64,67,64]
 
 genRec genBuf stopSig = do
     wait 0.05 -- we're generating a measure at a time; don't need to regen very often
-    stopNow <- atomically $ readTVar stopSig
+    stopNow <- readTVarIO stopSig
     if stopNow then return () else do
-        buf <- atomically $ readTVar genBuf -- what's left in the buffer?
+        buf <- readTVarIO genBuf -- what's left in the buffer?
         let newMidiMsgs = musicToMsgs' defParams $ someMusic
         if bufAmtGT buf 0.5 then return () else do -- if low buffer, add to it
             putStrLn "Adding music to buffer."
@@ -82,29 +118,73 @@ genRec genBuf stopSig = do
 
 detectExitLoop stopSignal = do
     wait 0.25 -- we only need to check for stopping periodically
-    stopNow <- atomically $ readTVar stopSignal
+    stopNow <- readTVarIO stopSignal
     if stopNow then return () else detectExitLoop stopSignal 
+
+printPushingKeysLoop pushingKeys stopSignal = do 
+    wait 1.0
+    stopNow <- readTVarIO stopSignal
+    if stopNow then return () else do
+      keys <- readTVarIO pushingKeys
+      print keys
+      printPushingKeysLoop pushingKeys stopSignal
 
 -- MIDI input is received by repeatedly polling the MIDI input device. 
 -- Importantly, this can't be done too fast. Trying to do it as fast as the 
 -- program can possibly execute will actually result in lag.
 
-midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)] -> TVar Bool -> IO ()
-midiInRec inDev inBuf stopSignal = do
+midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)] -> TVar (S.Set Key)
+          -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
+midiInRec inDev inBuf pushingKeys chordMap stopSignal = do
     wait 0.01 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
-    stopNow <- atomically $ readTVar stopSignal
+    stopNow <- readTVarIO stopSignal
     if stopNow then return () else do
-        let g Nothing = []
-            g (Just (t,ms)) = map (\m -> (0, Std $ m)) ms
-        msgs <- sequence $ map getMidiInput [inDev] -- get MIDI messages coming
-        let outVal = concatMap g msgs
+        msgs <- mapM getMidiInput [inDev] :: IO [Maybe (Time, [Message])]
+        m <- readTVarIO chordMap
+        let outVal = concatMap g msgs :: [(Time, MidiMessage)]
+                      where
+                        g Nothing = []
+                        g (Just (t,ms)) = map (\m -> (0, Std m)) $ ms >>= applyChordMap m
+        updatePushingKeys pushingKeys msgs
         if null outVal then return () else print ("User input: "++show outVal)
         if null outVal then return () else atomically $ addMsgs inBuf outVal
-        midiInRec inDev inBuf stopSignal
+        midiInRec inDev inBuf pushingKeys chordMap stopSignal
+
+applyChordMap :: Map.Map Key [Key] -> Message -> [Message]
+applyChordMap m (NoteOn ch key vel) = do
+  k <- case Map.lookup key m of
+        Just ks -> ks
+        Nothing -> return key
+  return $ NoteOn ch k vel
+applyChordMap m (NoteOff ch key vel) = do
+  k <- case Map.lookup key m of
+        Just ks -> ks
+        Nothing -> return key
+  return $ NoteOff ch k vel
+applyChordMap _ m = return m
 
 -- MIDI output is done by checking the output buffer and sending messages as 
 -- needed based on the current time. We use a TVar for this to communicate 
 -- information between the input and output threads. 
+
+updatePushingKeys :: TVar (S.Set Key) -> [Maybe (Time, [Message])] -> IO ()
+updatePushingKeys pushingKeys = mapM_ f
+  where
+    f :: Maybe (Time, [Message]) -> IO ()
+    f Nothing = return ()
+    f (Just (_, msgs)) = mapM_ ff msgs
+    ff :: Message -> IO ()
+    ff (NoteOn _ key _) = atomically $ do
+      x <- readTVar pushingKeys
+      let newVal = S.insert key x
+      writeTVar pushingKeys newVal 
+    ff (NoteOff _ key _) = atomically $ do
+      x <- readTVar pushingKeys
+      let newVal = S.delete key x
+      writeTVar pushingKeys newVal 
+    ff _ = return ()
+
+
 
 midiOutRec :: Double -> OutputDeviceID -> TVar [(Time, MidiMessage)] -> TVar [(Time, MidiMessage)] -> TVar Bool -> IO ()
 midiOutRec lastMsgTime outDev inBuf genBuf stopSig = do

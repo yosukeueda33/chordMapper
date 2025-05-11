@@ -30,6 +30,7 @@ dependencies:
 - unix
 - stm
 - time
+- containers
 
 ghc-options:
 - -Wall
