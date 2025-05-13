@@ -11,11 +11,15 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Data.Time
 import Data.Time.Clock.POSIX
+import Data.Maybe
 import System.Random
 import System.Exit 
 import qualified Data.Set as S (Set, insert, empty, delete, null)
 import Codec.Midi (Key)
 import qualified Data.Map as Map
+
+import Chord
+import Chord (ChordType(ChMajor7th, ChMinor7th, Ch7th))
 
 main = do
   hSetBuffering stdout NoBuffering
@@ -47,7 +51,7 @@ mainLoop inDev outDev = do
       -- forkIO (printPushingKeysLoop pushingKeys stopSig)
       forkIO (chordMapPreLoop 0 chordMapPre stopSig)
       forkIO (chordMapLoop pushingKeys chordMapPre chordMap stopSig)
-      -- forkIO (genRec genBuf stopSig) -- a generative placeholder
+      forkIO (genRec genBuf stopSig) -- a generative placeholder
       putStrLn ("MIDI I/O services started.")
       detectExitLoop stopSig -- should only exit this via handleCtrlC
       terminateMidi -- in case the recursion ends by some irregular means
@@ -63,9 +67,26 @@ mainLoop inDev outDev = do
                     exitSuccess 
 
 chordMaps :: [(Seconds, Map.Map Key [Key])]
-chordMaps = [ (4.0, Map.fromList [(48, [60, 64, 67])]),
-              (4.0, Map.fromList [(48, [59, 62, 67])])]
-    
+-- chordMaps = [ (4.0, Map.fromList [(48, [60, 64, 67])]),
+--               (4.0, Map.fromList [(48, [59, 62, 67])])]
+chordMaps = [ (4.0, getKeyMap two)
+            , (4.0, getKeyMap five)
+            , (4.0, getKeyMap one)
+            , (4.0, getKeyMap six)
+            ]
+            where
+              getKeyMap :: [Key] -> Map.Map Key [Key]
+              getKeyMap keys = Map.fromList l
+                where l = (48, map (48+) keys)
+                        : zipWith (\rk k -> (rk, [k+60])) rightKeys keys
+                      rightKeys = [60, 62, 64, 65]
+              f = fromJust . chordTones
+              two  = f $ Chord D ChMinor7th
+              five = f $ Chord G Ch7th
+              one  = f $ Chord C ChMajor7th
+              six  = f $ Chord A ChMinor7th
+
+
 chordMapPreLoop :: Int -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
 chordMapPreLoop i chordMapPre stopSignal = do
     -- wait 0.01
@@ -73,8 +94,27 @@ chordMapPreLoop i chordMapPre stopSignal = do
     if stopNow then return () else do
       let (duration, m) = chordMaps !! i
       atomically $ writeTVar chordMapPre m 
+      print "changed pre"
       wait duration
-      print $ "changed chord map pre" ++ show m
+      -- wait 0.2
+      -- print ("1")
+      -- wait 0.5
+      -- print ("*")
+      -- wait 0.5
+      -- print (" 2")
+      -- wait 0.5
+      -- print ("*")
+      -- wait 0.5
+      -- print ("  3")
+      -- wait 0.5
+      -- print ("*")
+      -- wait 0.5
+      -- print ("   4")
+      -- wait 0.5
+      -- print ("*")
+      -- -- wait 0.3
+      -- wait 0.5
+      -- print $ "changed chord map pre" ++ show m
       chordMapPreLoop ((i + 1) `mod` length chordMaps) chordMapPre stopSignal
 
 chordMapLoop :: TVar (S.Set Key) ->  TVar (Map.Map Key [Key]) -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
@@ -93,19 +133,46 @@ chordMapLoop pushingKeys chordMapPre chordMap stopSig = do
 -- Some music that we'll repeat. Think of this as a placeholder for a backing 
 -- track or some other computer accompaniment.
 
+nKick = \dura -> note dura (60::AbsPitch)
+nTum = \dura -> note dura (67::AbsPitch)
+nHighHat = \dura -> note dura (65::AbsPitch)
+-- nvHighHat = \dura vol -> note dura (64::AbsPitch, vol::Volume)
+nClap = \dura -> note dura (62::AbsPitch)
+-- nSp1 = \dura -> note dura (67::AbsPitch, 100::Volume)
+-- nSp2 = \dura -> note dura (69::AbsPitch, 100::Volume)
+
 someMusic :: Music AbsPitch
-someMusic = line $ map (note qn) [60,64,67,64]
+-- someMusic = instrument Percussion $ line $ map (note qn) [60,64,67,64]
+someMusic = instrument Percussion
+              $ times 2 $ line [nKick qn, rest qn, rest qn, rest qn]
+                :=: times 16 (nHighHat en)
+                :=: line [nClap dqn, nClap en, rest qn, rest qn, nClap qn, rest qn, rest hn] 
+          -- $ chord [
+          --           line [nKick qn, rest qn, rest qn, rest qn]
+          --         -- , nHighHat en
+          --         ]
 
 -- Now we send this to the MIDI out indefinitely, but only adding to the 
 -- buffer on an as-needed basis. This is necessary if we were to have a computer 
 -- response that adapts to the user's input in some way over time.
+
+myParams =
+  PlayParams
+    False (predefinedCP customChannelMap) Nothing -- (Just devId)
+    1.0 perf
+    where
+      customChannelMap = [(AcousticGrandPiano, 0), (Percussion, 1), (SynthBass1, 2)]
+      -- devId = unsafeOutputID 2
+      -- perf = map (\e -> e{eDur = max 0 (eDur e - 0.000001)}) . perform1
+      perf = perform1
 
 genRec genBuf stopSig = do
     wait 0.05 -- we're generating a measure at a time; don't need to regen very often
     stopNow <- readTVarIO stopSig
     if stopNow then return () else do
         buf <- readTVarIO genBuf -- what's left in the buffer?
-        let newMidiMsgs = musicToMsgs' defParams $ someMusic
+        -- let newMidiMsgs = musicToMsgs' defParams $ someMusic
+        let newMidiMsgs = musicToMsgs' myParams someMusic
         if bufAmtGT buf 0.5 then return () else do -- if low buffer, add to it
             putStrLn "Adding music to buffer."
             atomically $ writeTVar genBuf (buf ++ newMidiMsgs)
@@ -146,7 +213,7 @@ midiInRec inDev inBuf pushingKeys chordMap stopSignal = do
                         g Nothing = []
                         g (Just (t,ms)) = map (\m -> (0, Std m)) $ ms >>= applyChordMap m
         updatePushingKeys pushingKeys msgs
-        if null outVal then return () else print ("User input: "++show outVal)
+        -- if null outVal then return () else print ("User input: "++show outVal)
         if null outVal then return () else atomically $ addMsgs inBuf outVal
         midiInRec inDev inBuf pushingKeys chordMap stopSignal
 
