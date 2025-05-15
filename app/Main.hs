@@ -37,21 +37,19 @@ mainLoop :: Int -> Int -> IO ()
 mainLoop inDev outDev = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
-    pushingKeys <- newTVarIO S.empty -- :: TVar [AbsPitch]
-    chordMapPre <- newTVarIO Map.empty
-    chordMap <- newTVarIO Map.empty
+    tPushingKeys <- newTVarIO Map.empty
+    tChordMap <- newTVarIO (const Nothing)
     stopSig <- newTVarIO False -- stop signal
     putStrLn ("Clearing MIDI Devices...")
     wait 0.5
     handleCtrlC stopSig $ do
       putStrLn ("Initializing MIDI Devices...")
       initializeMidi
-      forkIO (midiInRec (unsafeInputID inDev) inBuf pushingKeys chordMap stopSig) -- poll input and add to buffer
-      forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
+      _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
+      _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
       -- forkIO (printPushingKeysLoop pushingKeys stopSig)
-      forkIO (chordMapPreLoop 0 chordMapPre stopSig)
-      forkIO (chordMapLoop pushingKeys chordMapPre chordMap stopSig)
-      forkIO (genRec genBuf stopSig) -- a generative placeholder
+      _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
+      _ <- forkIO (genRec genBuf stopSig) -- a generative placeholder
       putStrLn ("MIDI I/O services started.")
       detectExitLoop stopSig -- should only exit this via handleCtrlC
       terminateMidi -- in case the recursion ends by some irregular means
@@ -66,35 +64,46 @@ mainLoop inDev outDev = do
                     putStrLn "Done. Bye!"
                     exitSuccess 
 
-chordMaps :: [(Seconds, Map.Map Key [Key])]
--- chordMaps = [ (4.0, Map.fromList [(48, [60, 64, 67])]),
---               (4.0, Map.fromList [(48, [59, 62, 67])])]
-chordMaps = [ (4.0, getKeyMap two)
-            , (4.0, getKeyMap five)
-            , (4.0, getKeyMap one)
-            , (4.0, getKeyMap six)
+chordMaps :: [(Seconds, String, ChordKeyMap)]
+chordMaps = [ (4.0, "D ChMinor7th", getKeyMap two)
+            , (4.0, "G Ch7th     ", getKeyMap five)
+            , (4.0, "C ChMajor7th", getKeyMap one)
+            , (4.0, "A ChMinor7th", getKeyMap six)
             ]
             where
-              getKeyMap :: [Key] -> Map.Map Key [Key]
-              getKeyMap keys = Map.fromList l
-                where l = (48, map (48+) keys)
-                        : zipWith (\rk k -> (rk, [k+60])) rightKeys keys
-                      rightKeys = [60, 62, 64, 65]
+              offset = -12 * 4
+              getKeyMap :: [Key] -> ChordKeyMap
+              getKeyMap chordTones inputKey
+                | inputKey == 49 = Just []
+                | otherwise = wKeyToTones chordTones <$> inputWkey
+                where
+                  inputWkey = keyToWhiteKeyId inputKey  
+                  wKeyToTones :: [Key] -> Int -> [Key]
+                  wKeyToTones tones wkey = [(bNum * 12) + (tones !! x) + offset]
+                    where
+                      (bNum, x) = divMod wkey l
+                      l = length tones
+                
               f = fromJust . chordTones
+              keyToWhiteKeyId :: Key -> Maybe Int 
+              keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -> (5, 0)
+                where
+                  (a, b) = divMod k 12
+                  mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
               two  = f $ Chord D ChMinor7th
               five = f $ Chord G Ch7th
               one  = f $ Chord C ChMajor7th
               six  = f $ Chord A ChMinor7th
 
 
-chordMapPreLoop :: Int -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
-chordMapPreLoop i chordMapPre stopSignal = do
+chordMapLoop :: Int -> TVar ChordKeyMap -> TVar Bool -> IO ()
+chordMapLoop i tChordMap stopSignal = do
     -- wait 0.01
     stopNow <- readTVarIO stopSignal
     if stopNow then return () else do
-      let (duration, m) = chordMaps !! i
-      atomically $ writeTVar chordMapPre m 
-      print "changed pre"
+      let (duration, name, m) = chordMaps !! i
+      atomically $ writeTVar tChordMap m 
+      print $ "changed to" ++ name
       wait duration
       -- wait 0.2
       -- print ("1")
@@ -115,23 +124,8 @@ chordMapPreLoop i chordMapPre stopSignal = do
       -- -- wait 0.3
       -- wait 0.5
       -- print $ "changed chord map pre" ++ show m
-      chordMapPreLoop ((i + 1) `mod` length chordMaps) chordMapPre stopSignal
+      chordMapLoop ((i + 1) `mod` length chordMaps) tChordMap stopSignal
 
-chordMapLoop :: TVar (S.Set Key) ->  TVar (Map.Map Key [Key]) -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
-chordMapLoop pushingKeys chordMapPre chordMap stopSig = do
-    wait 0.01
-    stopNow <- readTVarIO stopSig
-    if stopNow then return () else do
-      pk <- readTVarIO pushingKeys
-      if not (S.null pk) then return () else do
-        atomically $ do
-          cm <- readTVar chordMapPre
-          writeTVar chordMap cm
-          -- lift print $ "changed chord map" ++ show cm
-      chordMapLoop pushingKeys chordMapPre chordMap stopSig
-
--- Some music that we'll repeat. Think of this as a placeholder for a backing 
--- track or some other computer accompaniment.
 
 nKick = \dura -> note dura (60::AbsPitch)
 nTum = \dura -> note dura (67::AbsPitch)
@@ -200,55 +194,61 @@ printPushingKeysLoop pushingKeys stopSignal = do
 -- Importantly, this can't be done too fast. Trying to do it as fast as the 
 -- program can possibly execute will actually result in lag.
 
-midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)] -> TVar (S.Set Key)
-          -> TVar (Map.Map Key [Key]) -> TVar Bool -> IO ()
-midiInRec inDev inBuf pushingKeys chordMap stopSignal = do
+type PushingKeyMap = Map.Map Key [Key]
+type ChordKeyMap = (Key -> Maybe [Key])
+
+midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)] -> TVar PushingKeyMap
+          -> TVar ChordKeyMap -> TVar Bool -> IO ()
+midiInRec inDev inBuf tPushingKeys tChordMap stopSignal = do
     wait 0.01 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
     stopNow <- readTVarIO stopSignal
     if stopNow then return () else do
         msgs <- mapM getMidiInput [inDev] :: IO [Maybe (Time, [Message])]
-        m <- readTVarIO chordMap
-        let outVal = concatMap g msgs :: [(Time, MidiMessage)]
-                      where
-                        g Nothing = []
-                        g (Just (t,ms)) = map (\m -> (0, Std m)) $ ms >>= applyChordMap m
-        updatePushingKeys pushingKeys msgs
-        -- if null outVal then return () else print ("User input: "++show outVal)
-        if null outVal then return () else atomically $ addMsgs inBuf outVal
-        midiInRec inDev inBuf pushingKeys chordMap stopSignal
+        atomically $ do
+          chordMap <- readTVar tChordMap
+          pushingKeys <- readTVar tPushingKeys
+          let outVal = concatMap g msgs :: [(Time, MidiMessage)]
+                        where
+                          g Nothing = []
+                          g (Just (t,ms)) = map (\m -> (0, Std m)) $ ms >>= applyChordMap chordMap pushingKeys
+          updatePushingKeys tChordMap tPushingKeys msgs
+          if null outVal then return () else addMsgs inBuf outVal
+          -- if null outVal then return () else lift $ print ("User input: "++show outVal)
+        midiInRec inDev inBuf tPushingKeys tChordMap stopSignal
 
-applyChordMap :: Map.Map Key [Key] -> Message -> [Message]
-applyChordMap m (NoteOn ch key vel) = do
-  k <- case Map.lookup key m of
+applyChordMap :: ChordKeyMap -> PushingKeyMap -> Message -> [Message]
+applyChordMap chordKeyMap _ (NoteOn ch key vel) = do
+  k <- case chordKeyMap key of
         Just ks -> ks
         Nothing -> return key
   return $ NoteOn ch k vel
-applyChordMap m (NoteOff ch key vel) = do
-  k <- case Map.lookup key m of
+applyChordMap _ pushingKeyMap (NoteOff ch key vel) = do
+  k <- case Map.lookup key pushingKeyMap of
         Just ks -> ks
         Nothing -> return key
   return $ NoteOff ch k vel
-applyChordMap _ m = return m
+applyChordMap _ _ m = return m
 
 -- MIDI output is done by checking the output buffer and sending messages as 
 -- needed based on the current time. We use a TVar for this to communicate 
 -- information between the input and output threads. 
 
-updatePushingKeys :: TVar (S.Set Key) -> [Maybe (Time, [Message])] -> IO ()
-updatePushingKeys pushingKeys = mapM_ f
+updatePushingKeys :: TVar ChordKeyMap -> TVar PushingKeyMap -> [Maybe (Time, [Message])] -> STM ()
+updatePushingKeys tChordMap tPushingKeys = mapM_ f
   where
-    f :: Maybe (Time, [Message]) -> IO ()
+    f :: Maybe (Time, [Message]) -> STM ()
     f Nothing = return ()
     f (Just (_, msgs)) = mapM_ ff msgs
-    ff :: Message -> IO ()
-    ff (NoteOn _ key _) = atomically $ do
-      x <- readTVar pushingKeys
-      let newVal = S.insert key x
-      writeTVar pushingKeys newVal 
-    ff (NoteOff _ key _) = atomically $ do
-      x <- readTVar pushingKeys
-      let newVal = S.delete key x
-      writeTVar pushingKeys newVal 
+    ff :: Message -> STM ()
+    ff (NoteOn _ key _) = do
+      m <- readTVar tPushingKeys
+      chordMap <- readTVar tChordMap
+      let newVal = (\mks -> Map.insert key mks m) <$> chordMap key 
+      mapM_ (writeTVar tPushingKeys) newVal
+    ff (NoteOff _ key _) = do
+      m <- readTVar tPushingKeys
+      let newVal = Map.delete key m
+      writeTVar tPushingKeys newVal 
     ff _ = return ()
 
 
