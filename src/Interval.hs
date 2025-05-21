@@ -25,15 +25,15 @@ majorInterval x = do
   return $ 12 * oct + p
 
 intervalPitch :: Interval -> Maybe AbsPitch 
-intervalPitch (Interval t x) = do
+intervalPitch (Interval q x) = do
   guard (x > 0)
   let
     n = x `mod` 7
     isPerfect = n `elem` [1, 4, 5]
-  guard $ (t == IPerf) ~> isPerfect
-  guard $ elem t [IMajor, IMinor] ~> not isPerfect
+  guard $ (q == IPerf) ~> isPerfect
+  guard $ elem q [IMajor, IMinor] ~> not isPerfect
   let
-    diff = case t of
+    diff = case q of
             IPerf -> 0
             IMajor -> 0
             IAug -> 1
