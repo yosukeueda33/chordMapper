@@ -18,8 +18,8 @@ import qualified Data.Set as S (Set, insert, empty, delete, null)
 import Codec.Midi (Key)
 import qualified Data.Map as Map
 
-import Chord
-import Chord (ChordType(ChMajor7th, ChMinor7th, Ch7th))
+-- import Chord
+import Chord (ChordType(..), Chord(..), chordTones)
 
 main = do
   hSetBuffering stdout NoBuffering
@@ -90,10 +90,10 @@ chordMaps = [ (4.0, "D ChMinor7th", getKeyMap two)
                 where
                   (a, b) = divMod k 12
                   mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
-              two  = f $ Chord D ChMinor7th
-              five = f $ Chord G Ch7th
-              one  = f $ Chord C ChMajor7th
-              six  = f $ Chord A ChMinor7th
+              two  = f $ Chord D ChMinor7th []
+              five = f $ Chord G Ch7th []
+              one  = f $ Chord C ChMajor7th []
+              six  = f $ Chord A ChMinor7th []
 
 
 chordMapLoop :: Int -> TVar ChordKeyMap -> TVar Bool -> IO ()

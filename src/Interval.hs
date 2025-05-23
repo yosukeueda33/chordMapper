@@ -1,4 +1,4 @@
-module Interval where
+module Interval (Interval(..), IntervalQuality(..), iPerf, iMaj, iMin, iAug, iDim, intervalPitch) where
 
 import Euterpea
 import Control.Monad (guard)

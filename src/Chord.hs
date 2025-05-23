@@ -1,7 +1,10 @@
-module Chord where
+module Chord (ChordType(..), Chord(..), chordTones) where
 
 import Euterpea
 import Interval
+    ( Interval, iPerf, iMaj, iMin, iAug, iDim, intervalPitch )
+import Data.Maybe
+import Data.List
 
 
 data ChordType
@@ -28,8 +31,6 @@ data ChordType
 allChordType :: [ChordType]
 allChordType = [minBound .. maxBound]
 
-data ChordAdd = ChordAdd ChordType [Tension]
-
 data Tension
   =  Ts9th
   | TsFlat9th
@@ -43,10 +44,12 @@ data Tension
 allTension :: [Tension]
 allTension = [minBound .. maxBound]
 
-data Chord = Chord PitchClass ChordType
+data Chord = Chord PitchClass ChordType [Tension]
+type ChordPitch = [AbsPitch]
 
-chordTones :: Chord -> Maybe [AbsPitch] 
-chordTones (Chord pc t) = mapM toPitch $ intervals t
+chordTones :: Chord -> Maybe ChordPitch
+chordTones (Chord pc chordType tensions) = mapM toPitch
+                                  $ intervals chordType ++ map tension tensions
   where
     toPitch :: Interval -> Maybe AbsPitch
     toPitch i = (root +) <$> intervalPitch i 
@@ -79,3 +82,94 @@ tension Ts11th = iPerf 11
 tension TsSharp11th = iAug 11
 tension TsFlat13th = iMin 13
 tension Ts13th = iMaj 13
+
+
+
+getVoicings :: Int -> Int -> ChordPitch -> [ChordPitch]
+getVoicings octRange offsetRange [] = []
+getVoicings octRange offsetRange (x:xs)
+  = filter (all (\x -> x < 24 && x > -10) ) . addOffset $ (x:) <$> f xs
+  where
+    f :: ChordPitch -> [ChordPitch]
+    f [] = [[]]
+    f (x:xs) = do
+      oct <- [-octRange .. octRange]
+      rs <- f xs
+      return $ (oct * 12) + x : rs
+    addOffset :: [ChordPitch] -> [ChordPitch]
+    addOffset chords = do
+      ch <- chords
+      offset <- [-offsetRange .. offsetRange]
+      return $ ((offset * 12) +) <$> ch 
+
+
+-- Too heavy.
+-- getSmoothInversions :: Int -> Int -> [Chord] -> [ChordPitch]
+-- getSmoothInversions offsetRange invRange = head . sortOn getPitchRange
+--                                            . getCombis
+--                                            . map (getVoicings invRange)
+--   where
+--     getCombis :: [[ChordPitch]] -> [[ChordPitch]]
+--     getCombis [] = [[]]
+--     getCombis (cps:cpss) = do
+--       cp <- cps
+--       offset <- [-offsetRange .. offsetRange]
+--       rcps <- getCombis cpss
+--       return $ map (+(12 * offset)) cp : rcps
+
+
+getVoicingBetweenOn :: Ord a => Int -> Int -> (ChordPitch->ChordPitch->a)
+                          -> ChordPitch -> ChordPitch -> ChordPitch
+getVoicingBetweenOn offsetRange octRange scoreFunc fromChord
+  = head . sortOn (scoreFunc fromChord) . getVoicings offsetRange octRange 
+
+getEnvelopeRange :: ChordPitch -> ChordPitch -> Int
+getEnvelopeRange c1 c2 = mAx - mIn
+  where
+    l = c1 ++ c2
+    mIn = minimum l
+    mAx = maximum l
+
+getEnvelopeDifference :: ChordPitch -> ChordPitch -> Int
+getEnvelopeDifference c1 c2 = sum . map abs $ [maximum c1 - maximum c2, minimum c1 - minimum c2]
+
+
+main :: IO ()
+main = do
+  let two  = Chord D ChMinor7th [Ts9th]
+      five = Chord G Ch7th [Ts9th]
+      one  = Chord C ChMajor7th [Ts9th]
+      six  = Chord A ChMinor7th [Ts9th]
+  -- print $ chordTones chord
+  -- print $ getVoicings 1 1 . fromJust $ chordTones two
+  print $ chordTones two
+  print $ chordTones five
+  print $ chordTones one
+  print $ chordTones six
+
+  let smoothFive = getVoicingBetweenOn 1 1 getEnvelopeDifference
+            (fromJust $ chordTones two) (fromJust $ chordTones five)
+  print smoothFive
+  let smoothOne = getVoicingBetweenOn 1 1 getEnvelopeDifference
+            smoothFive (fromJust $ chordTones one)
+  print smoothOne
+  let smoothSix = getVoicingBetweenOn 1 1 getEnvelopeDifference
+            smoothOne (fromJust $ chordTones six)
+  print smoothSix
+
+  let smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
+          $ map (fromJust . chordTones) [two, five, one, six]
+  print smooth2516
+
+  let chordsToMusic = line . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 60))
+  let just2516m = chordsToMusic $ map (fromJust . chordTones) [two, five, one, six]
+  let smooth2516m = chordsToMusic smooth2516
+  writeMidi "just2516.midi" just2516m
+  writeMidi "smooth2516.midi" smooth2516m 
+  writeMidi "2516s.midi" $ just2516m :+: smooth2516m
+
+  let chordsToMusic = line . map (chord . map (note en . (+) 60))
+  let fives = getVoicings 1 1 . fromJust $ chordTones five
+  let ones = getVoicings 1 1 . fromJust $ chordTones one
+  writeMidi "G9thInv.midi" $ chordsToMusic fives
+  writeMidi "ChMajor9thInv.midi" $ chordsToMusic ones
