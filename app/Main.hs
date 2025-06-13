@@ -17,9 +17,12 @@ import System.Exit
 import qualified Data.Set as S (Set, insert, empty, delete, null)
 import Codec.Midi (Key)
 import qualified Data.Map as Map
+import Control.Applicative
+import Control.Monad
 
 -- import Chord
-import Chord (ChordType(..), Chord(..), chordTones)
+import Chord (ChordType(..), Chord(..), Tension(..), chordTones
+             , getVoicingBetweenOn, getEnvelopeDifference)
 
 main = do
   hSetBuffering stdout NoBuffering
@@ -29,8 +32,8 @@ main = do
 --  let inDev = read (args !! 0)
 --      outDev = read (args !! 1)
   getAllDevices >>= print
-  let inDev = 5
-      outDev = 2
+  let inDev = 3
+      outDev = 10
   mainLoop inDev outDev
 
 mainLoop :: Int -> Int -> IO ()
@@ -65,35 +68,48 @@ mainLoop inDev outDev = do
                     exitSuccess 
 
 chordMaps :: [(Seconds, String, ChordKeyMap)]
-chordMaps = [ (4.0, "D ChMinor7th", getKeyMap two)
-            , (4.0, "G Ch7th     ", getKeyMap five)
-            , (4.0, "C ChMajor7th", getKeyMap one)
-            , (4.0, "A ChMinor7th", getKeyMap six)
+chordMaps = [ (4.0, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
+            , (4.0, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
+            , (4.0, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
+            , (4.0, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
             ]
             where
+              smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
+                           $ map (fromJust . chordTones) [two, five, one, six]
               offset = -12 * 4
               getKeyMap :: [Key] -> ChordKeyMap
-              getKeyMap chordTones inputKey
-                | inputKey == 49 = Just []
-                | otherwise = wKeyToTones chordTones <$> inputWkey
+              getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
+              -- getKeyMap chordTones inputKey = wKeyResult
                 where
-                  inputWkey = keyToWhiteKeyId inputKey  
+                  -- rKeyResult for play root tone of the nearest block.
+                  rKeyResult :: Maybe [Key] 
+                  rKeyResult = asRightOfWkeyBlockStart <|> asLeftOfWkeyBlockStart
+                    where
+                      asRightOfWkeyBlockStart = do
+                        x <- keyToWhiteKeyId (inputKey - 1)
+                        guard $ x `mod` 4 == 0
+                        return $ getRootToneOfTheWkey x
+                      asLeftOfWkeyBlockStart = Nothing -- For the case the start of white key block is B or F.
+                      getRootToneOfTheWkey :: Int -> [Key] 
+                      getRootToneOfTheWkey wkey = [head chordTones + (wkey `div` (length chordTones - 1)) * 12 + offset]
+                  wKeyResult :: Maybe [Key] 
+                  wKeyResult = wKeyToTones (sort $ tail chordTones) <$> keyToWhiteKeyId inputKey -- The tail for rootless voicing.
+                  isRootKey x = True
                   wKeyToTones :: [Key] -> Int -> [Key]
                   wKeyToTones tones wkey = [(bNum * 12) + (tones !! x) + offset]
                     where
                       (bNum, x) = divMod wkey l
                       l = length tones
                 
-              f = fromJust . chordTones
               keyToWhiteKeyId :: Key -> Maybe Int 
               keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -> (5, 0)
                 where
                   (a, b) = divMod k 12
                   mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
-              two  = f $ Chord D ChMinor7th []
-              five = f $ Chord G Ch7th []
-              one  = f $ Chord C ChMajor7th []
-              six  = f $ Chord A ChMinor7th []
+              two  = Chord D ChMinor7th [Ts9th]
+              five = Chord G Ch7th [Ts9th]
+              one  = Chord C ChMajor7th [Ts9th]
+              six  = Chord A ChMinor7th [Ts9th]
 
 
 chordMapLoop :: Int -> TVar ChordKeyMap -> TVar Bool -> IO ()

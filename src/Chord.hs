@@ -1,4 +1,4 @@
-module Chord (ChordType(..), Chord(..), chordTones) where
+module Chord (ChordType(..), Chord(..), Tension(..), chordTones, getVoicingBetweenOn, getEnvelopeDifference) where
 
 import Euterpea
 import Interval
