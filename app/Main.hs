@@ -12,6 +12,7 @@ import Control.Concurrent.STM
 import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Maybe
+import qualified Data.ByteString.Lazy as BL
 import System.Random
 import System.Exit 
 import qualified Data.Set as S (Set, insert, empty, delete, null)
@@ -32,8 +33,8 @@ main = do
 --  let inDev = read (args !! 0)
 --      outDev = read (args !! 1)
   getAllDevices >>= print
-  let inDev = 3
-      outDev = 10
+  let inDev = 5
+      outDev = 2
   mainLoop inDev outDev
 
 mainLoop :: Int -> Int -> IO ()
@@ -48,11 +49,10 @@ mainLoop inDev outDev = do
     handleCtrlC stopSig $ do
       putStrLn ("Initializing MIDI Devices...")
       initializeMidi
+      -- _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
+      _ <- forkIO (clockLoop tChordMap genBuf stopSig)
       _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
       _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
-      -- forkIO (printPushingKeysLoop pushingKeys stopSig)
-      _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
-      _ <- forkIO (genRec genBuf stopSig) -- a generative placeholder
       putStrLn ("MIDI I/O services started.")
       detectExitLoop stopSig -- should only exit this via handleCtrlC
       terminateMidi -- in case the recursion ends by some irregular means
@@ -61,17 +61,66 @@ mainLoop inDev outDev = do
                 f = do
                     atomically $ writeTVar stopSig True -- signal the other threads to stop
                     putStrLn "Stopping MIDI devices" -- not clear why Ctrl+C is needed again
-                    wait 1.0 -- give the other threads time to stop before closing down MIDI!
+                    wait 2.0 -- give the other threads time to stop before closing down MIDI!
+                    putStrLn "before terminating..."
                     terminateMidi -- close down MIDI
+                    putStrLn "terminating..."
                     wait 0.5 -- give MIDI time to close down
                     putStrLn "Done. Bye!"
                     exitSuccess 
 
-chordMaps :: [(Seconds, String, ChordKeyMap)]
-chordMaps = [ (4.0, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
-            , (4.0, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
-            , (4.0, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
-            , (4.0, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
+clockLoop :: TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
+          -> TVar Bool -> IO ()
+clockLoop tChordMap genBuf stopSig =
+  let
+    f x = atomically
+        $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
+    start = f 0xFA 
+    stop = do 
+      f 0xFC
+      putStrLn "closed clock"
+    loop iChord iWait = do
+      stopNow <- readTVarIO stopSig
+      if stopNow then return () else do
+        wait $ 4.0 / (24.0 * 4.0)
+        f 0xF8
+        let
+          (duration, name, m) = chordMaps !! iChord
+        if iWait >= (duration - 1) then do
+          let nextIwait  = 0
+              nextIchord = (iChord + 1) `mod` length chordMaps 
+              (duration', name', m') = chordMaps !! nextIchord
+          atomically $ writeTVar tChordMap m' 
+          print $ "changed to" ++ name'
+          loop nextIchord nextIwait
+        else do
+          let nextIwait = iWait + 1
+          loop iChord nextIwait
+
+  in do
+    let (duration, name, m) = chordMaps !! 0
+    atomically $ writeTVar tChordMap m 
+    start
+    loop 0 1
+    stop
+
+
+-- chordMaps :: [(Seconds, String, ChordKeyMap)]
+-- chordMaps = [ (4.0, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
+--             , (4.0, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
+--             , (4.0, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
+--             , (4.0, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
+--             ]
+chordMaps :: [(Int, String, ChordKeyMap)]
+-- chordMaps = [ (24 * 4, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
+--             , (24 * 4, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
+--             , (24 * 4, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
+--             , (24 * 4, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
+--             ]
+chordMaps = [ (24 * 2, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
+            , (24 * 2, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
+            , (24 * 4, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
+            -- , (24 * 4, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
             ]
             where
               smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
@@ -112,35 +161,16 @@ chordMaps = [ (4.0, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
               six  = Chord A ChMinor7th [Ts9th]
 
 
-chordMapLoop :: Int -> TVar ChordKeyMap -> TVar Bool -> IO ()
-chordMapLoop i tChordMap stopSignal = do
-    -- wait 0.01
-    stopNow <- readTVarIO stopSignal
-    if stopNow then return () else do
-      let (duration, name, m) = chordMaps !! i
-      atomically $ writeTVar tChordMap m 
-      print $ "changed to" ++ name
-      wait duration
-      -- wait 0.2
-      -- print ("1")
-      -- wait 0.5
-      -- print ("*")
-      -- wait 0.5
-      -- print (" 2")
-      -- wait 0.5
-      -- print ("*")
-      -- wait 0.5
-      -- print ("  3")
-      -- wait 0.5
-      -- print ("*")
-      -- wait 0.5
-      -- print ("   4")
-      -- wait 0.5
-      -- print ("*")
-      -- -- wait 0.3
-      -- wait 0.5
-      -- print $ "changed chord map pre" ++ show m
-      chordMapLoop ((i + 1) `mod` length chordMaps) tChordMap stopSignal
+-- chordMapLoop :: Int -> TVar ChordKeyMap -> TVar Bool -> IO ()
+-- chordMapLoop i tChordMap stopSignal = do
+--     -- wait 0.01
+--     stopNow <- readTVarIO stopSignal
+--     if stopNow then return () else do
+--       let (duration, name, m) = chordMaps !! i
+--       atomically $ writeTVar tChordMap m 
+--       print $ "changed to" ++ name
+--       wait duration
+--       chordMapLoop ((i + 1) `mod` length chordMaps) tChordMap stopSignal
 
 
 nKick = \dura -> note dura (60::AbsPitch)
@@ -186,10 +216,11 @@ genRec genBuf stopSig = do
         if bufAmtGT buf 0.5 then return () else do -- if low buffer, add to it
             putStrLn "Adding music to buffer."
             atomically $ writeTVar genBuf (buf ++ newMidiMsgs)
-    genRec genBuf stopSig where
-    bufAmtGT :: [(Time,a)] -> Time -> Bool
-    bufAmtGT [] tAmt = False
-    bufAmtGT ((t,x):txs) tAmt = if t>tAmt then True else bufAmtGT txs (tAmt-t)
+        genRec genBuf stopSig
+          where
+            bufAmtGT :: [(Time,a)] -> Time -> Bool
+            bufAmtGT [] tAmt = False
+            bufAmtGT ((t,_):txs) tAmt = if t>tAmt then True else bufAmtGT txs (tAmt-t)
 
 -- This function is just to delay main until the user has pressed Ctrl+C.
 
@@ -281,9 +312,10 @@ midiOutRec lastMsgTime outDev inBuf genBuf stopSig = do
         outVal2 <- atomically $ getUpdateMsgs genBuf tEllapsed -- fetch generated music
         let newMsgTime = if null outVal2 then lastMsgTime else  currT'
         sendMidiOut outDev (outVal1++outVal2) -- send out to MIDI device
-        midiOutRec newMsgTime outDev inBuf genBuf stopSig where
-    posixFix :: NominalDiffTime -> Double
-    posixFix x = fromIntegral (round(x * 1000)) / 1000
+        midiOutRec newMsgTime outDev inBuf genBuf stopSig
+    where
+      posixFix :: NominalDiffTime -> Double
+      posixFix x = fromIntegral (round(x * 1000)) / 1000
 
 -- ====== Just utility functions below this point ======
 
