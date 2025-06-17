@@ -32,10 +32,15 @@ main = do
 --  args <- getArgs
 --  let inDev = read (args !! 0)
 --      outDev = read (args !! 1)
-  getAllDevices >>= print
-  let inDev = 5
-      outDev = 2
-  mainLoop inDev outDev
+  -- getAllDevices >>= print
+  (inDevs, outDevs) <- getAllDevices
+  putStrLn "input devices:"
+  mapM_ print inDevs
+  putStrLn "output devices:"
+  mapM_ print outDevs
+  let inDevId = 5
+      outDevId = 2
+  mainLoop inDevId outDevId
 
 mainLoop :: Int -> Int -> IO ()
 mainLoop inDev outDev = do
@@ -43,22 +48,26 @@ mainLoop inDev outDev = do
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     tPushingKeys <- newTVarIO Map.empty
     tChordMap <- newTVarIO (const Nothing)
-    stopSig <- newTVarIO False -- stop signal
+    preStopSig <- newTVarIO False
+    stopSig <- newTVarIO False
     putStrLn ("Clearing MIDI Devices...")
     wait 0.5
-    handleCtrlC stopSig $ do
+    handleCtrlC preStopSig stopSig $ do
       putStrLn ("Initializing MIDI Devices...")
       initializeMidi
       -- _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
-      _ <- forkIO (clockLoop tChordMap genBuf stopSig)
+        _ <- forkIO (clockLoop tChordMap genBuf preStopSig)
       _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
       _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
       putStrLn ("MIDI I/O services started.")
       detectExitLoop stopSig -- should only exit this via handleCtrlC
       terminateMidi -- in case the recursion ends by some irregular means
       exitFailure -- in case the recursion ends by some irregular means
-        where handleCtrlC stopSig op = onException op f where
+      where handleCtrlC preStopSig stopSig op = onException op f where
                 f = do
+                  atomically $ writeTVar preStopSig True -- signal the other threads to stop
+                  putStrLn "Stopping clock signal" -- not clear why Ctrl+C is needed again
+                  wait 1.0
                     atomically $ writeTVar stopSig True -- signal the other threads to stop
                     putStrLn "Stopping MIDI devices" -- not clear why Ctrl+C is needed again
                     wait 2.0 -- give the other threads time to stop before closing down MIDI!
@@ -71,7 +80,7 @@ mainLoop inDev outDev = do
 
 clockLoop :: TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
           -> TVar Bool -> IO ()
-clockLoop tChordMap genBuf stopSig =
+clockLoop tChordMap genBuf preStopSig =
   let
     f x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
@@ -80,7 +89,7 @@ clockLoop tChordMap genBuf stopSig =
       f 0xFC
       putStrLn "closed clock"
     loop iChord iWait = do
-      stopNow <- readTVarIO stopSig
+      stopNow <- readTVarIO preStopSig
       if stopNow then return () else do
         wait $ 4.0 / (24.0 * 4.0)
         f 0xF8
