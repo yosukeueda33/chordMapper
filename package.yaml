@@ -32,6 +32,10 @@ dependencies:
 - stm
 - time
 - containers
+- monomer
+- text
+- text-show
+- lens
 
 ghc-options:
 - -Wall
