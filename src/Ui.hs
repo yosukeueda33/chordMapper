@@ -8,11 +8,16 @@ import Data.Text (Text)
 import Monomer
 import TextShow
 import Control.Concurrent.MVar
+import Control.Concurrent.STM
+import Control.Concurrent (threadDelay)
 
 import qualified Monomer.Lens as L
 
-newtype AppModel = AppModel {
-  _clickCount :: Int
+import Types
+
+data AppModel = AppModel {
+  _clickCount :: Int,
+  _chordName :: String
 } deriving (Eq, Show)
 
 data AppEvent
@@ -22,6 +27,7 @@ data AppEvent
   | AppDisposeDone
   | AppExit
   | AppExitDone
+  | AppUpdateChord String 
   deriving (Eq, Show)
 
 makeLenses 'AppModel
@@ -32,7 +38,7 @@ buildUI
   -> WidgetNode AppModel AppEvent
 buildUI wenv model = widgetTree where
   widgetTree = vstack [
-      label "Hello world",
+      label $ showt $ model ^. chordName,
       spacer,
       hstack [
         label $ "Click count: " <> showt (model ^. clickCount),
@@ -54,20 +60,30 @@ exitTask exitSig = do
 
 handleEvent
   :: MVar ()
+  -> TVar String
   -> WidgetEnv AppModel AppEvent
   -> WidgetNode AppModel AppEvent
   -> AppModel
   -> AppEvent
   -> [AppEventResponse AppModel AppEvent]
-handleEvent exitSig wenv node model evt = case evt of
-  AppInit -> []
+handleEvent exitSig tChordName wenv node model evt = case evt of
+  AppInit -> [Producer $ chordUpdateProducer tChordName]
   AppIncrease -> [Model (model & clickCount +~ 1)]
   AppDispose -> [Task disposeTask]
   AppExit -> [Task $ exitTask exitSig]
+  AppUpdateChord name -> [Model $ model & chordName .~ name]
 
-uiMain :: MVar () -> IO ()
-uiMain exitSig = do
-  startApp model (handleEvent exitSig) buildUI config
+chordUpdateProducer :: TVar String
+                    -> (AppEvent -> IO ()) -> IO ()
+chordUpdateProducer tChordName sendMsg = do
+    name <- readTVarIO tChordName
+    sendMsg $ AppUpdateChord name 
+    threadDelay 10000
+    chordUpdateProducer tChordName sendMsg
+
+uiMain :: MVar () -> TVar String -> IO ()
+uiMain exitSig tChordName = do
+  startApp model (handleEvent exitSig tChordName) buildUI config
   where
     config = [
       appWindowTitle "KANNASHI chordMapper",
@@ -77,4 +93,4 @@ uiMain exitSig = do
       appDisposeEvent AppDispose,
       appExitEvent AppExit
       ]
-    model = AppModel 0
+    model = AppModel 0 ""

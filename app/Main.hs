@@ -27,6 +27,7 @@ import Monomer
 import Chord (ChordType(..), Chord(..), Tension(..), chordTones
              , getVoicingBetweenOn, getEnvelopeDifference)
 import Ui
+import Types
 
 main = do
   hSetBuffering stdout NoBuffering
@@ -41,8 +42,8 @@ main = do
   mapM_ print inDevs
   putStrLn "output devices:"
   mapM_ print outDevs
-  let inDevId = 3
-      outDevId = 10
+  let inDevId = 5
+      outDevId = 2
   mainLoop inDevId outDevId
 
 mainLoop :: Int -> Int -> IO ()
@@ -51,6 +52,7 @@ mainLoop inDev outDev = do
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     tPushingKeys <- newTVarIO Map.empty
     tChordMap <- newTVarIO (const Nothing)
+    tChordName <- newTVarIO ""
     preStopSig <- newTVarIO False
     stopSig <- newTVarIO False
     exitSig <- newEmptyMVar
@@ -61,10 +63,10 @@ mainLoop inDev outDev = do
         putStrLn ("Initializing MIDI Devices...")
         initializeMidi
         -- _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
-        _ <- forkIO (clockLoop tChordMap genBuf preStopSig)
+        _ <- forkIO (clockLoop tChordMap genBuf preStopSig tChordName)
         _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
         _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
-        _ <- forkIO $ uiMain exitSig
+        _ <- forkIO $ uiMain exitSig tChordName
         putStrLn ("MIDI I/O services started.")
         detectExitLoop stopSig -- should only exit this via handleCtrlC
         terminateMidi -- in case the recursion ends by some irregular means
@@ -89,8 +91,8 @@ mainLoop inDev outDev = do
     closeOp
 
 clockLoop :: TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
-          -> TVar Bool -> IO ()
-clockLoop tChordMap genBuf preStopSig =
+          -> TVar Bool -> TVar String -> IO ()
+clockLoop tChordMap genBuf preStopSig tChordName =
   let
     f x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
@@ -110,6 +112,7 @@ clockLoop tChordMap genBuf preStopSig =
               nextIchord = (iChord + 1) `mod` length chordMaps 
               (duration', name', m') = chordMaps !! nextIchord
           atomically $ writeTVar tChordMap m' 
+          atomically $ writeTVar tChordName name'
           print $ "changed to" ++ name'
           loop nextIchord nextIwait
         else do
@@ -259,9 +262,6 @@ printPushingKeysLoop pushingKeys stopSignal = do
 -- MIDI input is received by repeatedly polling the MIDI input device. 
 -- Importantly, this can't be done too fast. Trying to do it as fast as the 
 -- program can possibly execute will actually result in lag.
-
-type PushingKeyMap = Map.Map Key [Key]
-type ChordKeyMap = (Key -> Maybe [Key])
 
 midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)] -> TVar PushingKeyMap
           -> TVar ChordKeyMap -> TVar Bool -> IO ()
