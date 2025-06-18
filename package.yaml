@@ -36,6 +36,7 @@ dependencies:
 - text
 - text-show
 - lens
+- dhall
 
 ghc-options:
 - -Wall

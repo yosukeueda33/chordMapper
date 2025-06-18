@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main (main) where
 
 import Euterpea
@@ -21,13 +24,33 @@ import qualified Data.Map as Map
 import Control.Applicative
 import Control.Monad
 import Control.Concurrent.MVar
+import qualified Data.Text as T
 import Monomer
+import Dhall
 
 -- import Chord
 import Chord (ChordType(..), Chord(..), Tension(..), chordTones
              , getVoicingBetweenOn, getEnvelopeDifference)
 import Ui
 import Types
+
+data ChordMapConfig = ChordMapConfig {
+                                       chordDuration :: Natural
+                                     , chordKey :: Text
+                                     , chordType :: Text
+                                     , chordTension :: [Text]
+                                     }
+    deriving (Generic, Show)
+
+data Config = Config {
+                       inDevId :: Natural
+                     , outDevId :: Natural
+                     , chordMapConfigs :: [ChordMapConfig]
+                     }
+    deriving (Generic, Show)
+
+instance Dhall.Interpret ChordMapConfig
+instance Dhall.Interpret Config
 
 main = do
   hSetBuffering stdout NoBuffering
@@ -42,12 +65,12 @@ main = do
   mapM_ print inDevs
   putStrLn "output devices:"
   mapM_ print outDevs
-  let inDevId = 5
-      outDevId = 2
-  mainLoop inDevId outDevId
+  config <- Dhall.input Dhall.auto "./config/config.dhall" :: IO Config
+  print config
+  mainLoop config 
 
-mainLoop :: Int -> Int -> IO ()
-mainLoop inDev outDev = do
+mainLoop :: Config -> IO ()
+mainLoop config = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     tPushingKeys <- newTVarIO Map.empty
@@ -59,11 +82,14 @@ mainLoop inDev outDev = do
     putStrLn ("Clearing MIDI Devices...")
     wait 0.5
     let
+      inDev = fromIntegral $ inDevId config
+      outDev = fromIntegral $ outDevId config
+      cMaps = genChordMap $ chordMapConfigs config
       op = do
         putStrLn ("Initializing MIDI Devices...")
         initializeMidi
         -- _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
-        _ <- forkIO (clockLoop tChordMap genBuf preStopSig tChordName)
+        _ <- forkIO (clockLoop cMaps tChordMap genBuf preStopSig tChordName)
         _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
         _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
         _ <- forkIO $ uiMain exitSig tChordName
@@ -90,9 +116,9 @@ mainLoop inDev outDev = do
     putStrLn "Got exit"
     closeOp
 
-clockLoop :: TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
+clockLoop :: [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
           -> TVar Bool -> TVar String -> IO ()
-clockLoop tChordMap genBuf preStopSig tChordName =
+clockLoop cMaps tChordMap genBuf preStopSig tChordName =
   let
     f x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
@@ -106,14 +132,14 @@ clockLoop tChordMap genBuf preStopSig tChordName =
         wait $ 4.0 / (24.0 * 4.0)
         f 0xF8
         let
-          (duration, name, m) = chordMaps !! iChord
+          (duration, name, m) = cMaps !! iChord
         if iWait >= (duration - 1) then do
           let nextIwait  = 0
-              nextIchord = (iChord + 1) `mod` length chordMaps 
-              (duration', name', m') = chordMaps !! nextIchord
+              nextIchord = (iChord + 1) `mod` length cMaps 
+              (duration', name', m') = cMaps !! nextIchord
           atomically $ writeTVar tChordMap m' 
           atomically $ writeTVar tChordName name'
-          print $ "changed to" ++ name'
+          -- print $ "changed to" ++ name'
           loop nextIchord nextIwait
         else do
           let nextIwait = iWait + 1
@@ -126,19 +152,33 @@ clockLoop tChordMap genBuf preStopSig tChordName =
     loop 0 1
     stop
 
+type ChordMap = (Int, String, ChordKeyMap)
 
--- chordMaps :: [(Seconds, String, ChordKeyMap)]
--- chordMaps = [ (4.0, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
---             , (4.0, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
---             , (4.0, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
---             , (4.0, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
---             ]
-chordMaps :: [(Int, String, ChordKeyMap)]
--- chordMaps = [ (24 * 4, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
---             , (24 * 4, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
---             , (24 * 4, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
---             , (24 * 4, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
---             ]
+genChordMap :: [ChordMapConfig] -> [ChordMap]
+genChordMap cfgs =
+  let
+    names = map f cfgs
+      where
+        f cfg = key ++ " " ++ tYpe ++ " + " ++ tension :: String
+          where
+            key = T.unpack $ chordKey cfg
+            tYpe = T.unpack $ chordType cfg
+            tension = T.unpack . mconcat $ chordTension cfg 
+    chords = map f cfgs :: [Chord]
+      where
+        f cfg = Chord key tYpe tension
+          where
+            key = read . T.unpack $ chordKey cfg
+            tYpe = read . ("Ch" ++) . T.unpack $ chordType cfg
+            tension = map (read . ("Ts" ++) . T.unpack) $ chordTension cfg 
+    smoothedChords = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
+                   $ map (fromJust . chordTones) chords
+    mappers = map getKeyMap smoothedChords :: [ChordKeyMap]
+  in
+    zip3 (map (fromIntegral . chordDuration) cfgs) names mappers
+
+
+chordMaps :: [ChordMap]
 chordMaps = [ (24 * 2, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
             , (24 * 2, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
             , (24 * 4, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
@@ -147,41 +187,42 @@ chordMaps = [ (24 * 2, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
             where
               smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
                            $ map (fromJust . chordTones) [two, five, one, six]
-              offset = -12 * 4
-              getKeyMap :: [Key] -> ChordKeyMap
-              getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
-              -- getKeyMap chordTones inputKey = wKeyResult
-                where
-                  -- rKeyResult for play root tone of the nearest block.
-                  rKeyResult :: Maybe [Key] 
-                  rKeyResult = asRightOfWkeyBlockStart <|> asLeftOfWkeyBlockStart
-                    where
-                      asRightOfWkeyBlockStart = do
-                        x <- keyToWhiteKeyId (inputKey - 1)
-                        guard $ x `mod` 4 == 0
-                        return $ getRootToneOfTheWkey x
-                      asLeftOfWkeyBlockStart = Nothing -- For the case the start of white key block is B or F.
-                      getRootToneOfTheWkey :: Int -> [Key] 
-                      getRootToneOfTheWkey wkey = [head chordTones + (wkey `div` (length chordTones - 1)) * 12 + offset]
-                  wKeyResult :: Maybe [Key] 
-                  wKeyResult = wKeyToTones (sort $ tail chordTones) <$> keyToWhiteKeyId inputKey -- The tail for rootless voicing.
-                  isRootKey x = True
-                  wKeyToTones :: [Key] -> Int -> [Key]
-                  wKeyToTones tones wkey = [(bNum * 12) + (tones !! x) + offset]
-                    where
-                      (bNum, x) = divMod wkey l
-                      l = length tones
-                
-              keyToWhiteKeyId :: Key -> Maybe Int 
-              keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -> (5, 0)
-                where
-                  (a, b) = divMod k 12
-                  mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
               two  = Chord D ChMinor7th [Ts9th]
               five = Chord G Ch7th [Ts9th]
               one  = Chord C ChMajor7th [Ts9th]
               six  = Chord A ChMinor7th [Ts9th]
 
+getKeyMap :: [Key] -> ChordKeyMap
+getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
+-- getKeyMap chordTones inputKey = wKeyResult
+  where
+    -- rKeyResult for play root tone of the nearest block.
+    offset = -12 * 4
+    rKeyResult :: Maybe [Key] 
+    rKeyResult = asRightOfWkeyBlockStart <|> asLeftOfWkeyBlockStart
+      where
+        asRightOfWkeyBlockStart = do
+          x <- keyToWhiteKeyId (inputKey - 1)
+          guard $ x `mod` 4 == 0
+          return $ getRootToneOfTheWkey x
+        asLeftOfWkeyBlockStart = Nothing -- For the case the start of white key block is B or F.
+        getRootToneOfTheWkey :: Int -> [Key] 
+        getRootToneOfTheWkey wkey
+          = [head chordTones + (wkey `div` (length chordTones - 1)) * 12 + offset]
+    wKeyResult :: Maybe [Key] 
+    wKeyResult = wKeyToTones (sort $ tail chordTones) <$> keyToWhiteKeyId inputKey -- The tail for rootless voicing.
+    isRootKey x = True
+    wKeyToTones :: [Key] -> Int -> [Key]
+    wKeyToTones tones wkey = [(bNum * 12) + (tones !! x) + offset]
+      where
+        (bNum, x) = divMod wkey l
+        l = length tones
+  
+keyToWhiteKeyId :: Key -> Maybe Int 
+keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -> (5, 0)
+  where
+    (a, b) = divMod k 12
+    mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
 
 -- chordMapLoop :: Int -> TVar ChordKeyMap -> TVar Bool -> IO ()
 -- chordMapLoop i tChordMap stopSignal = do

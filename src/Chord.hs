@@ -26,7 +26,7 @@ data ChordType
   | Ch7thSus2
   | Ch7thSus4
   | ChBlackAddor
-  deriving (Enum, Bounded)
+  deriving (Enum, Bounded, Read)
 
 allChordType :: [ChordType]
 allChordType = [minBound .. maxBound]
@@ -39,7 +39,7 @@ data Tension
   | TsSharp11th
   | Ts13th
   | TsFlat13th
-  deriving (Enum, Bounded)
+  deriving (Enum, Bounded, Read)
 
 allTension :: [Tension]
 allTension = [minBound .. maxBound]
