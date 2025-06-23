@@ -1,20 +1,54 @@
-let makeChord = \(dur : Natural)
-              -> \(key : Text) -> \(type : Text) -> \(tension : List Text) ->
-    {
-      chordDuration = dur
-    , chordKey = key
-    , chordType = type
-    , chordTension = tension
-    }
+let AbsoluteChord = {
+  chordRoot : Text,
+  chordType : Text,
+  chordTension : List Text
+}
+
+let DegreeChord = {
+  chordKey : Text,
+  chordScale : Text,
+  chordDegree : Natural
+}
+
+let ChordMapConfig = <Abs : AbsoluteChord | Deg : DegreeChord>
+
+-- let makeChord = \(dur : Natural)
+--               -> \(key : Text) -> \(type : Text) -> \(tension : List Text) ->
+--     {
+--       chordDuration = dur
+--     , chordKey = key
+--     , chordType = type
+--     , chordTension = tension
+--     }
+let getAminor = \(deg : Natural) ->
+      ChordMapConfig.Deg {chordKey = "A", chordScale = "Minor", chordDegree = deg}
+
+let getCmajor = \(deg : Natural) ->
+      ChordMapConfig.Deg {chordKey = "C", chordScale = "Major", chordDegree = deg}
+
+let getFmajor = \(deg : Natural) ->
+      ChordMapConfig.Deg {chordKey = "F", chordScale = "Major", chordDegree = deg}
 
 in
-{ inDevId = 5
-, outDevId = 2
-, chordMapConfigs = [
-                     makeChord (24 * 2) "G" "Minor7th" [ "9th" ]
-                   , makeChord (24 * 2) "C" "7th" [ "9th" ]
-                   , makeChord (24 * 4) "F" "Major7th" [ "9th" ]
-                   ]
+{ inDevId = 3
+, outDevId = 10
+, chordMapConfigs = [ {durationCnf = 24*2, chordCnf = getFmajor 2}
+                    , {durationCnf = 24*2, chordCnf = getFmajor 5}
+                    , {durationCnf = 24*4, chordCnf = getFmajor 1}
+                    ] : List {durationCnf : Natural, chordCnf : ChordMapConfig}
+-- , chordMapConfigs = [ {durationCnf = 24*2, chordCnf = getCmajor 2}
+--                     , {durationCnf = 24*2, chordCnf = getCmajor 5}
+--                     , {durationCnf = 24*4, chordCnf = getCmajor 1}
+--                     ] : List {durationCnf : Natural, chordCnf : ChordMapConfig}
+-- , chordMapConfigs = [ {durationCnf = 24*2, chordCnf = getAminor 2}
+--                     , {durationCnf = 24*2, chordCnf = getAminor 5}
+--                     , {durationCnf = 24*4, chordCnf = getAminor 1}
+--                     ] : List {durationCnf : Natural, chordCnf : ChordMapConfig}
+-- , chordMapConfigs = [
+--                      makeChord (24 * 2) "G" "Minor7th" [ "9th" ]
+--                    , makeChord (24 * 2) "C" "7th" [ "9th" ]
+--                    , makeChord (24 * 4) "F" "Major7th" [ "9th" ]
+--                    ]
 -- , chordMapConfigs = [
 --                      makeChord (24 * 2) "D" "Minor7th" [ "9th" ]
 --                    , makeChord (24 * 2) "G" "7th" [ "9th" ]

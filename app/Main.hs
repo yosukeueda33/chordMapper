@@ -30,27 +30,56 @@ import Dhall
 
 -- import Chord
 import Chord (ChordType(..), Chord(..), Tension(..), chordTones
-             , getVoicingBetweenOn, getEnvelopeDifference)
+             , getVoicingBetweenOn, getEnvelopeDifference, degreeToChord7thOneTension)
 import Ui
 import Types
 
-data ChordMapConfig = ChordMapConfig {
-                                       chordDuration :: Natural
-                                     , chordKey :: Text
-                                     , chordType :: Text
-                                     , chordTension :: [Text]
-                                     }
-    deriving (Generic, Show)
 
-data Config = Config {
-                       inDevId :: Natural
-                     , outDevId :: Natural
-                     , chordMapConfigs :: [ChordMapConfig]
-                     }
-    deriving (Generic, Show)
+-- Variant 1: Absolute chord
+data AbsoluteChord = AbsoluteChord
+  { chordRoot    :: Text
+  , chordType    :: Text
+  , chordTension :: [Text]
+  } deriving (Show, Generic)
 
-instance Dhall.Interpret ChordMapConfig
-instance Dhall.Interpret Config
+-- Variant 2: Degree-based chord
+data DegreeChord = DegreeChord
+  { chordKey     :: Text
+  , chordScale   :: Text
+  , chordDegree  :: Natural
+  } deriving (Show, Generic)
+
+-- Tagged union (Abs or Deg)
+data ChordMapConfig
+  = Abs AbsoluteChord
+  | Deg DegreeChord
+  deriving (Show, Generic)
+
+instance Interpret ChordMapConfig where
+  autoWith _ =
+    Dhall.union
+      (  ( constructor "Abs" (Abs <$> Dhall.auto))
+      <> ( constructor "Deg" (Deg <$> Dhall.auto))
+      )
+
+-- Entry combining duration and chord
+data ChordMapEntry = ChordMapEntry
+  { durationCnf :: Natural
+  , chordCnf    :: ChordMapConfig
+  } deriving (Show, Generic)
+
+-- Full config
+data FullConfig = FullConfig
+  { inDevId         :: Natural
+  , outDevId        :: Natural
+  , chordMapConfigs :: [ChordMapEntry]
+  } deriving (Show, Generic)
+
+instance Dhall.Interpret AbsoluteChord
+instance Dhall.Interpret DegreeChord
+-- instance Dhall.Interpret ChordMapConfig
+instance Dhall.Interpret ChordMapEntry
+instance Dhall.Interpret FullConfig
 
 main = do
   hSetBuffering stdout NoBuffering
@@ -65,11 +94,11 @@ main = do
   mapM_ print inDevs
   putStrLn "output devices:"
   mapM_ print outDevs
-  config <- Dhall.input Dhall.auto "./config/config.dhall" :: IO Config
+  config <- Dhall.input Dhall.auto "./config/config.dhall" :: IO FullConfig
   print config
   mainLoop config 
 
-mainLoop :: Config -> IO ()
+mainLoop :: FullConfig -> IO ()
 mainLoop config = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
@@ -154,28 +183,39 @@ clockLoop cMaps tChordMap genBuf preStopSig tChordName =
 
 type ChordMap = (Int, String, ChordKeyMap)
 
-genChordMap :: [ChordMapConfig] -> [ChordMap]
+genChordMap :: [ChordMapEntry] -> [ChordMap]
 genChordMap cfgs =
   let
     names = map f cfgs
       where
-        f cfg = key ++ " " ++ tYpe ++ " + " ++ tension :: String
-          where
-            key = T.unpack $ chordKey cfg
-            tYpe = T.unpack $ chordType cfg
-            tension = T.unpack . mconcat $ chordTension cfg 
-    chords = map f cfgs :: [Chord]
+        f (ChordMapEntry dur (Deg (DegreeChord key scale deg)))
+          = show dur ++ " " ++ show key ++ show scale ++ show deg
+        f cfg = show cfg
+
+    chords = map (f . chordCnf) cfgs :: [Chord]
       where
-        f cfg = Chord key tYpe tension
+        f :: ChordMapConfig -> Chord
+        f (Deg (DegreeChord key scale deg)) = degreeToChord7thOneTension key' scale' deg'
           where
-            key = read . T.unpack $ chordKey cfg
-            tYpe = read . ("Ch" ++) . T.unpack $ chordType cfg
-            tension = map (read . ("Ts" ++) . T.unpack) $ chordTension cfg 
+            key' = read $ T.unpack key :: PitchClass
+            scale' = sToMode $ T.unpack scale :: Mode
+            sToMode s = case s of
+              "Major" -> Major
+              "Minor" -> Minor
+              _ -> error "config error"
+            deg' = fromIntegral deg :: Int
+        f _ = error "config error"
+        -- f cfg = Chord key tYpe tension
+        --   where
+        --     key = read . T.unpack $ chordKey cfg
+        --     tYpe = read . ("Ch" ++) . T.unpack $ chordType cfg
+        --     tension = map (read . ("Ts" ++) . T.unpack) $ chordTension cfg 
     smoothedChords = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
                    $ map (fromJust . chordTones) chords
     mappers = map getKeyMap smoothedChords :: [ChordKeyMap]
+    durations = (map (fromIntegral . durationCnf) cfgs)
   in
-    zip3 (map (fromIntegral . chordDuration) cfgs) names mappers
+    zip3 durations names mappers
 
 
 chordMaps :: [ChordMap]
