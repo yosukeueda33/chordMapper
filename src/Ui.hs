@@ -4,9 +4,9 @@
 module Ui (uiMain, UiInput(..)) where
 
 import Control.Lens
-import Data.Text (Text)
+import Data.Text as T
 import Monomer
-import TextShow
+
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Concurrent (threadDelay)
@@ -48,7 +48,7 @@ buildUI
   -> WidgetNode AppModel AppEvent
 buildUI wenv model = widgetTree where
   widgetTree = vstack [
-      label $ showt $ model ^. chordName,
+      label_ (T.pack $ model ^. chordName) [resizeFactor 1] `styleBasic` [textSize 24],
       button "Play/Stop" AppStartStop
     ] `styleBasic` [padding 10]
 

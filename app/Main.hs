@@ -203,10 +203,16 @@ type ChordMap = (Int, String, ChordKeyMap)
 genChordMap :: [ChordMapEntry] -> [ChordMap]
 genChordMap cfgs =
   let
-    names = map f cfgs
+    names = map f cfgs :: [String]
       where
         f (ChordMapEntry dur (Deg (DegreeChord key scale deg)))
-          = show dur ++ " " ++ show key ++ show scale ++ show deg
+          = mconcat [ show dur
+                    , " "
+                    , T.unpack key
+                    , " "
+                    , T.unpack scale
+                    , " "
+                    , show deg] :: String
         f cfg = show cfg
 
     chords = map (f . chordCnf) cfgs :: [Chord]
