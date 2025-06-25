@@ -72,6 +72,7 @@ data ChordMapEntry = ChordMapEntry
 data FullConfig = FullConfig
   { inDevId         :: Natural
   , outDevId        :: Natural
+  , oneQnSec        :: Double
   , chordMapConfigs :: [ChordMapEntry]
   } deriving (Show, Generic)
 
@@ -114,11 +115,12 @@ mainLoop config = do
       inDev = fromIntegral $ inDevId config
       outDev = fromIntegral $ outDevId config
       cMaps = genChordMap $ chordMapConfigs config
+      qnSec = oneQnSec config
       op = do
         putStrLn ("Initializing MIDI Devices...")
         initializeMidi
         -- _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
-        _ <- forkIO (clockLoop cMaps tChordMap genBuf preStopSig tChordName)
+        _ <- forkIO (clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName)
         _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
         _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
         _ <- forkIO $ uiMain exitSig tChordName
@@ -145,9 +147,9 @@ mainLoop config = do
     putStrLn "Got exit"
     closeOp
 
-clockLoop :: [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
+clockLoop :: Double -> [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
           -> TVar Bool -> TVar String -> IO ()
-clockLoop cMaps tChordMap genBuf preStopSig tChordName =
+clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName =
   let
     f x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
@@ -158,7 +160,8 @@ clockLoop cMaps tChordMap genBuf preStopSig tChordName =
     loop iChord iWait = do
       stopNow <- readTVarIO preStopSig
       if stopNow then return () else do
-        wait $ 4.0 / (24.0 * 4.0)
+        -- The 24 is realtime-clock count of MIDI.
+        wait $ qnSec / 24.0
         f 0xF8
         let
           (duration, name, m) = cMaps !! iChord
