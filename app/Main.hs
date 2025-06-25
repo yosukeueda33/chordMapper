@@ -28,28 +28,24 @@ import qualified Data.Text as T
 import Monomer
 import Dhall
 
--- import Chord
 import Chord (ChordType(..), Chord(..), Tension(..), chordTones
              , getVoicingBetweenOn, getEnvelopeDifference, degreeToChord7thOneTension)
 import Ui
 import Types
 
 
--- Variant 1: Absolute chord
 data AbsoluteChord = AbsoluteChord
   { chordRoot    :: Text
   , chordType    :: Text
   , chordTension :: [Text]
   } deriving (Show, Generic)
 
--- Variant 2: Degree-based chord
 data DegreeChord = DegreeChord
   { chordKey     :: Text
   , chordScale   :: Text
   , chordDegree  :: Natural
   } deriving (Show, Generic)
 
--- Tagged union (Abs or Deg)
 data ChordMapConfig
   = Abs AbsoluteChord
   | Deg DegreeChord
@@ -62,13 +58,11 @@ instance Interpret ChordMapConfig where
       <> ( constructor "Deg" (Deg <$> Dhall.auto))
       )
 
--- Entry combining duration and chord
 data ChordMapEntry = ChordMapEntry
   { durationCnf :: Natural
   , chordCnf    :: ChordMapConfig
   } deriving (Show, Generic)
 
--- Full config
 data FullConfig = FullConfig
   { inDevId         :: Natural
   , outDevId        :: Natural
@@ -78,7 +72,6 @@ data FullConfig = FullConfig
 
 instance Dhall.Interpret AbsoluteChord
 instance Dhall.Interpret DegreeChord
--- instance Dhall.Interpret ChordMapConfig
 instance Dhall.Interpret ChordMapEntry
 instance Dhall.Interpret FullConfig
 
@@ -86,10 +79,7 @@ main = do
   hSetBuffering stdout NoBuffering
   hSetBuffering stdin NoBuffering
   hFlush stdout
---  args <- getArgs
---  let inDev = read (args !! 0)
---      outDev = read (args !! 1)
-  -- getAllDevices >>= print
+
   (inDevs, outDevs) <- getAllDevices
   putStrLn "input devices:"
   mapM_ print inDevs
@@ -119,7 +109,6 @@ mainLoop config = do
       op = do
         putStrLn ("Initializing MIDI Devices...")
         initializeMidi
-        -- _ <- forkIO (chordMapLoop 0 tChordMap stopSig)
         _ <- forkIO (clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName)
         _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
         _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
@@ -127,7 +116,6 @@ mainLoop config = do
         putStrLn ("MIDI I/O services started.")
         detectExitLoop stopSig -- should only exit this via handleCtrlC
         terminateMidi -- in case the recursion ends by some irregular means
-        -- exitFailure -- in case the recursion ends by some irregular means
       closeOp = do
         atomically $ writeTVar preStopSig True -- signal the other threads to stop
         putStrLn "Stopping clock signal" -- not clear why Ctrl+C is needed again
@@ -140,8 +128,6 @@ mainLoop config = do
         putStrLn "terminating..."
         wait 0.5 -- give MIDI time to close down
         putStrLn "Done. Bye!"
-        -- exitSuccess 
-    -- onException op closeOp
     _ <- forkIO op
     takeMVar exitSig
     putStrLn "Got exit"
@@ -178,8 +164,6 @@ clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName =
           loop iChord nextIwait
 
   in do
-    let (duration, name, m) = chordMaps !! 0
-    atomically $ writeTVar tChordMap m 
     start
     loop 0 1
     stop
@@ -208,11 +192,7 @@ genChordMap cfgs =
               _ -> error "config error"
             deg' = fromIntegral deg :: Int
         f _ = error "config error"
-        -- f cfg = Chord key tYpe tension
-        --   where
-        --     key = read . T.unpack $ chordKey cfg
-        --     tYpe = read . ("Ch" ++) . T.unpack $ chordType cfg
-        --     tension = map (read . ("Ts" ++) . T.unpack) $ chordTension cfg 
+
     smoothedChords = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
                    $ map (fromJust . chordTones) chords
     mappers = map getKeyMap smoothedChords :: [ChordKeyMap]
@@ -221,25 +201,9 @@ genChordMap cfgs =
     zip3 durations names mappers
 
 
-chordMaps :: [ChordMap]
-chordMaps = [ (24 * 2, "D ChMinor7th", getKeyMap $ smooth2516 !! 0)
-            , (24 * 2, "G Ch7th     ", getKeyMap $ smooth2516 !! 1)
-            , (24 * 4, "C ChMajor7th", getKeyMap $ smooth2516 !! 2)
-            -- , (24 * 4, "A ChMinor7th", getKeyMap $ smooth2516 !! 3)
-            ]
-            where
-              smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
-                           $ map (fromJust . chordTones) [two, five, one, six]
-              two  = Chord D ChMinor7th [Ts9th]
-              five = Chord G Ch7th [Ts9th]
-              one  = Chord C ChMajor7th [Ts9th]
-              six  = Chord A ChMinor7th [Ts9th]
-
 getKeyMap :: [Key] -> ChordKeyMap
 getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
--- getKeyMap chordTones inputKey = wKeyResult
   where
-    -- rKeyResult for play root tone of the nearest block.
     offset = -12 * 4
     rKeyResult :: Maybe [Key] 
     rKeyResult = asRightOfWkeyBlockStart <|> asLeftOfWkeyBlockStart
@@ -267,49 +231,12 @@ keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -
     (a, b) = divMod k 12
     mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
 
--- chordMapLoop :: Int -> TVar ChordKeyMap -> TVar Bool -> IO ()
--- chordMapLoop i tChordMap stopSignal = do
---     -- wait 0.01
---     stopNow <- readTVarIO stopSignal
---     if stopNow then return () else do
---       let (duration, name, m) = chordMaps !! i
---       atomically $ writeTVar tChordMap m 
---       print $ "changed to" ++ name
---       wait duration
---       chordMapLoop ((i + 1) `mod` length chordMaps) tChordMap stopSignal
-
-
-nKick = \dura -> note dura (60::AbsPitch)
-nTum = \dura -> note dura (67::AbsPitch)
-nHighHat = \dura -> note dura (65::AbsPitch)
--- nvHighHat = \dura vol -> note dura (64::AbsPitch, vol::Volume)
-nClap = \dura -> note dura (62::AbsPitch)
--- nSp1 = \dura -> note dura (67::AbsPitch, 100::Volume)
--- nSp2 = \dura -> note dura (69::AbsPitch, 100::Volume)
-
-someMusic :: Music AbsPitch
--- someMusic = instrument Percussion $ line $ map (note qn) [60,64,67,64]
-someMusic = instrument Percussion
-              $ times 2 $ line [nKick qn, rest qn, rest qn, rest qn]
-                :=: times 16 (nHighHat en)
-                :=: line [nClap dqn, nClap en, rest qn, rest qn, nClap qn, rest qn, rest hn] 
-          -- $ chord [
-          --           line [nKick qn, rest qn, rest qn, rest qn]
-          --         -- , nHighHat en
-          --         ]
-
--- Now we send this to the MIDI out indefinitely, but only adding to the 
--- buffer on an as-needed basis. This is necessary if we were to have a computer 
--- response that adapts to the user's input in some way over time.
-
 myParams =
   PlayParams
     False (predefinedCP customChannelMap) Nothing -- (Just devId)
     1.0 perf
     where
       customChannelMap = [(AcousticGrandPiano, 0), (Percussion, 1), (SynthBass1, 2)]
-      -- devId = unsafeOutputID 2
-      -- perf = map (\e -> e{eDur = max 0 (eDur e - 0.000001)}) . perform1
       perf = perform1
 
 genRec genBuf stopSig = do
@@ -328,8 +255,6 @@ genRec genBuf stopSig = do
             bufAmtGT [] tAmt = False
             bufAmtGT ((t,_):txs) tAmt = if t>tAmt then True else bufAmtGT txs (tAmt-t)
 
--- This function is just to delay main until the user has pressed Ctrl+C.
-
 detectExitLoop stopSignal = do
     wait 0.25 -- we only need to check for stopping periodically
     stopNow <- readTVarIO stopSignal
@@ -342,10 +267,6 @@ printPushingKeysLoop pushingKeys stopSignal = do
       keys <- readTVarIO pushingKeys
       print keys
       printPushingKeysLoop pushingKeys stopSignal
-
--- MIDI input is received by repeatedly polling the MIDI input device. 
--- Importantly, this can't be done too fast. Trying to do it as fast as the 
--- program can possibly execute will actually result in lag.
 
 midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)] -> TVar PushingKeyMap
           -> TVar ChordKeyMap -> TVar Bool -> IO ()
@@ -378,10 +299,6 @@ applyChordMap _ pushingKeyMap (NoteOff ch key vel) = do
         Nothing -> return key
   return $ NoteOff ch k vel
 applyChordMap _ _ m = return m
-
--- MIDI output is done by checking the output buffer and sending messages as 
--- needed based on the current time. We use a TVar for this to communicate 
--- information between the input and output threads. 
 
 updatePushingKeys :: TVar ChordKeyMap -> TVar PushingKeyMap -> [Maybe (Time, [Message])] -> STM ()
 updatePushingKeys tChordMap tPushingKeys = mapM_ f
@@ -420,18 +337,12 @@ midiOutRec lastMsgTime outDev inBuf genBuf stopSig = do
       posixFix :: NominalDiffTime -> Double
       posixFix x = fromIntegral (round(x * 1000)) / 1000
 
--- ====== Just utility functions below this point ======
-
--- Just add values to the end of the buffer:
-
 addMsgs :: TVar [a] -> [a] -> STM ()
 addMsgs v [] = return () 
 addMsgs v xs = do
     x <- readTVar v
     let newVal = x ++ xs
     writeTVar v newVal 
-
--- Clear the buffer after reading it:
 
 getClearMsgs :: TVar [a] -> STM [a]
 getClearMsgs v = do 
@@ -440,8 +351,6 @@ getClearMsgs v = do
               _ -> do -- it has values!
                   writeTVar v [] -- empty the TVar buffer
                   return x -- return the values it had
-
--- Read and return/clear events that are ready to be sent to a MIDI device.
 
 getUpdateMsgs :: TVar [(Time, a)] -> Time -> STM [(Time, a)]
 getUpdateMsgs v tElapsed = do
@@ -456,16 +365,12 @@ getUpdateMsgs v tElapsed = do
                 else do -- not time yet
                     return []
 
--- Utilities to interface with lower-level MIDI functions
-
 sendMidiOut :: OutputDeviceID -> [(Time, MidiMessage)] -> IO ()
 sendMidiOut dev [] = return ()
 sendMidiOut dev ms = outputMidi dev >> (mapM_ (\(t,m) -> deliverMidiEvent dev (0, m))) ms
 
 getMidiInput :: InputDeviceID -> IO (Maybe (Time, [Message])) -- Codec.Midi message format
 getMidiInput dev = pollMidi dev
-
--- Thread delay utility:
 
 type Seconds = Double
 wait :: Seconds -> IO () 
