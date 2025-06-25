@@ -231,30 +231,6 @@ keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -
     (a, b) = divMod k 12
     mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
 
-myParams =
-  PlayParams
-    False (predefinedCP customChannelMap) Nothing -- (Just devId)
-    1.0 perf
-    where
-      customChannelMap = [(AcousticGrandPiano, 0), (Percussion, 1), (SynthBass1, 2)]
-      perf = perform1
-
-genRec genBuf stopSig = do
-    wait 0.05 -- we're generating a measure at a time; don't need to regen very often
-    stopNow <- readTVarIO stopSig
-    if stopNow then return () else do
-        buf <- readTVarIO genBuf -- what's left in the buffer?
-        -- let newMidiMsgs = musicToMsgs' defParams $ someMusic
-        let newMidiMsgs = musicToMsgs' myParams someMusic
-        if bufAmtGT buf 0.5 then return () else do -- if low buffer, add to it
-            putStrLn "Adding music to buffer."
-            atomically $ writeTVar genBuf (buf ++ newMidiMsgs)
-        genRec genBuf stopSig
-          where
-            bufAmtGT :: [(Time,a)] -> Time -> Bool
-            bufAmtGT [] tAmt = False
-            bufAmtGT ((t,_):txs) tAmt = if t>tAmt then True else bufAmtGT txs (tAmt-t)
-
 detectExitLoop stopSignal = do
     wait 0.25 -- we only need to check for stopping periodically
     stopNow <- readTVarIO stopSignal
