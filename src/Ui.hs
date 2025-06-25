@@ -16,13 +16,11 @@ import qualified Monomer.Lens as L
 import Types
 
 data AppModel = AppModel {
-  _clickCount :: Int,
   _chordName :: String
 } deriving (Eq, Show)
 
 data AppEvent
   = AppInit
-  | AppIncrease
   | AppDispose
   | AppDisposeDone
   | AppExit
@@ -38,13 +36,7 @@ buildUI
   -> WidgetNode AppModel AppEvent
 buildUI wenv model = widgetTree where
   widgetTree = vstack [
-      label $ showt $ model ^. chordName,
-      spacer,
-      hstack [
-        label $ "Click count: " <> showt (model ^. clickCount),
-        spacer,
-        button "Increase count" AppIncrease
-      ]
+      label $ showt $ model ^. chordName
     ] `styleBasic` [padding 10]
 
 disposeTask :: TaskHandler AppEvent
@@ -68,7 +60,6 @@ handleEvent
   -> [AppEventResponse AppModel AppEvent]
 handleEvent exitSig tChordName wenv node model evt = case evt of
   AppInit -> [Producer $ chordUpdateProducer tChordName]
-  AppIncrease -> [Model (model & clickCount +~ 1)]
   AppDispose -> [Task disposeTask]
   AppExit -> [Task $ exitTask exitSig]
   AppUpdateChord name -> [Model $ model & chordName .~ name]
