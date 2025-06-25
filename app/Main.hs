@@ -87,18 +87,46 @@ main = do
   mapM_ print outDevs
   config <- Dhall.input Dhall.auto "./config/config.dhall" :: IO FullConfig
   print config
-  mainLoop config 
 
-mainLoop :: FullConfig -> IO ()
-mainLoop config = do
+  --Start/Stop loop.
+  mUiInput <- newEmptyMVar
+  loopExitSig <- newEmptyMVar
+  loopExitDoneSig <- newMVar ()
+  tChordName <- newTVarIO ""
+  _ <- forkIO $ uiMain mUiInput tChordName
+  initializeMidi
+  let
+    loop :: IO ()
+    loop = do
+      i <- takeMVar mUiInput :: IO UiInput
+      case i of
+        UiStart -> do
+          _ <- tryTakeMVar loopExitDoneSig
+          _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig tChordName config 
+          putStrLn "Loop Started."
+          loop
+        UiStop -> do
+          putMVar loopExitSig ()
+          takeMVar loopExitDoneSig
+          putStrLn "Loop Stop Done."
+          putMVar loopExitDoneSig ()
+          loop
+        UiExit -> do
+          putMVar loopExitSig ()
+          takeMVar loopExitDoneSig
+          putStrLn "Loop Exit Done."
+          putMVar loopExitDoneSig ()
+  loop
+  terminateMidi
+
+mainLoop :: MVar () -> MVar () -> TVar String -> FullConfig -> IO ()
+mainLoop exitSig exitDoneSig tChordName config = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     tPushingKeys <- newTVarIO Map.empty
     tChordMap <- newTVarIO (const Nothing)
-    tChordName <- newTVarIO ""
     preStopSig <- newTVarIO False
     stopSig <- newTVarIO False
-    exitSig <- newEmptyMVar
     putStrLn ("Clearing MIDI Devices...")
     wait 0.5
     let
@@ -108,14 +136,11 @@ mainLoop config = do
       qnSec = oneQnSec config
       op = do
         putStrLn ("Initializing MIDI Devices...")
-        initializeMidi
         _ <- forkIO (clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName)
         _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
         _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
-        _ <- forkIO $ uiMain exitSig tChordName
         putStrLn ("MIDI I/O services started.")
         detectExitLoop stopSig -- should only exit this via handleCtrlC
-        terminateMidi -- in case the recursion ends by some irregular means
       closeOp = do
         atomically $ writeTVar preStopSig True -- signal the other threads to stop
         putStrLn "Stopping clock signal" -- not clear why Ctrl+C is needed again
@@ -124,10 +149,8 @@ mainLoop config = do
         putStrLn "Stopping MIDI devices" -- not clear why Ctrl+C is needed again
         wait 2.0 -- give the other threads time to stop before closing down MIDI!
         putStrLn "before terminating..."
-        terminateMidi -- close down MIDI
-        putStrLn "terminating..."
         wait 0.5 -- give MIDI time to close down
-        putStrLn "Done. Bye!"
+        putMVar exitDoneSig ()
     _ <- forkIO op
     takeMVar exitSig
     putStrLn "Got exit"
@@ -139,9 +162,16 @@ clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName =
   let
     f x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
-    start = f 0xFA 
+    start = do
+      let (duration, name, m) = cMaps !! 0
+      atomically $ do
+        writeTVar tChordMap m
+        writeTVar tChordName name
+      f 0xFA 
     stop = do 
       f 0xFC
+      atomically $ do
+        writeTVar tChordName ""
       putStrLn "closed clock"
     loop iChord iWait = do
       stopNow <- readTVarIO preStopSig

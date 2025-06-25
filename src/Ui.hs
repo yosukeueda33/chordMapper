@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Ui (uiMain) where
+module Ui (uiMain, UiInput(..)) where
 
 import Control.Lens
 import Data.Text (Text)
@@ -15,18 +15,30 @@ import qualified Monomer.Lens as L
 
 import Types
 
+data PlayState = PlayStopped | PlayStopping | Playing deriving (Eq, Show)
+
 data AppModel = AppModel {
-  _chordName :: String
+  _chordName :: String,
+  _playing :: PlayState
 } deriving (Eq, Show)
 
 data AppEvent
   = AppInit
+  | AppStartStop
+  | AppStartDone
+  | AppStopDone
+  | AppSetBorder [Int]
   | AppDispose
   | AppDisposeDone
   | AppExit
   | AppExitDone
   | AppUpdateChord String 
   deriving (Eq, Show)
+
+data UiInput
+  = UiStart
+  | UiStop
+  | UiExit
 
 makeLenses 'AppModel
 
@@ -36,33 +48,39 @@ buildUI
   -> WidgetNode AppModel AppEvent
 buildUI wenv model = widgetTree where
   widgetTree = vstack [
-      label $ showt $ model ^. chordName
+      label $ showt $ model ^. chordName,
+      button "Play/Stop" AppStartStop
     ] `styleBasic` [padding 10]
 
-disposeTask :: TaskHandler AppEvent
-disposeTask = do
-    putStrLn "dispose task"
-    return AppDisposeDone
-
-exitTask :: MVar () -> TaskHandler AppEvent
-exitTask exitSig = do
-    putStrLn "exit task"
-    putMVar exitSig ()
-    return AppExitDone
 
 handleEvent
-  :: MVar ()
+  :: MVar UiInput
   -> TVar String
   -> WidgetEnv AppModel AppEvent
   -> WidgetNode AppModel AppEvent
   -> AppModel
   -> AppEvent
   -> [AppEventResponse AppModel AppEvent]
-handleEvent exitSig tChordName wenv node model evt = case evt of
-  AppInit -> [Producer $ chordUpdateProducer tChordName]
-  AppDispose -> [Task disposeTask]
-  AppExit -> [Task $ exitTask exitSig]
-  AppUpdateChord name -> [Model $ model & chordName .~ name]
+handleEvent mUiInput tChordName wenv node model evt =
+  let
+    startTask = putMVar mUiInput UiStart >> return AppStartDone
+    stopTask = putMVar mUiInput UiStop >> return AppStopDone
+    disposeTask = return AppDisposeDone
+    exitTask = putMVar mUiInput UiExit >> return AppExitDone
+  in case evt of
+    AppInit -> [Producer $ chordUpdateProducer tChordName]
+    AppStartStop -> case model ^. playing of
+                      Playing -> [ Task stopTask
+                                 , Model $ model & playing .~ PlayStopping
+                                 , Model $ model & chordName .~ ""
+                                 ]
+                      PlayStopped -> [Task startTask, Model $ model & playing .~ Playing]
+                      PlayStopping -> []
+    AppStartDone -> []
+    AppStopDone -> [Model $ model & playing .~ PlayStopped]
+    AppDispose -> [Task disposeTask]
+    AppExit -> [Task exitTask]
+    AppUpdateChord name -> [Model $ model & chordName .~ name]
 
 chordUpdateProducer :: TVar String
                     -> (AppEvent -> IO ()) -> IO ()
@@ -72,9 +90,9 @@ chordUpdateProducer tChordName sendMsg = do
     threadDelay 10000
     chordUpdateProducer tChordName sendMsg
 
-uiMain :: MVar () -> TVar String -> IO ()
-uiMain exitSig tChordName = do
-  startApp model (handleEvent exitSig tChordName) buildUI config
+uiMain :: MVar UiInput -> TVar String -> IO ()
+uiMain mUiInput tChordName = do
+  startApp model (handleEvent mUiInput tChordName) buildUI config
   where
     config = [
       appWindowTitle "KANNASHI chordMapper",
@@ -84,4 +102,4 @@ uiMain exitSig tChordName = do
       appDisposeEvent AppDispose,
       appExitEvent AppExit
       ]
-    model = AppModel 0 ""
+    model = AppModel "" PlayStopped
