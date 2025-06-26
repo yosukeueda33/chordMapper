@@ -30,7 +30,12 @@ let getFmajor = \(deg : Natural) ->
       ChordMapConfig.Deg {chordKey = "F", chordScale = "Major", chordDegree = deg}
 
 in
-, oneQnSec = 0.5
+{ oneQnSec = 0.5
+, chordMapConfigs = [
+                      {durationCnf = 24*4, chordCnf = getFmajor 4}
+                    , {durationCnf = 24*4, chordCnf = getFmajor 1}
+                    , {durationCnf = 24*4, chordCnf = getFmajor 5}
+                    , {durationCnf = 24*4, chordCnf = getFmajor 6}
                     ] : List {durationCnf : Natural, chordCnf : ChordMapConfig}
 -- , chordMapConfigs = [ {durationCnf = 24*2, chordCnf = getCmajor 2}
 --                     , {durationCnf = 24*2, chordCnf = getCmajor 5}

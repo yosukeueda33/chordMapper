@@ -25,6 +25,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Concurrent.MVar
 import qualified Data.Text as T
+import Data.Bifunctor
 import Monomer
 import Dhall
 
@@ -64,9 +65,7 @@ data ChordMapEntry = ChordMapEntry
   } deriving (Show, Generic)
 
 data FullConfig = FullConfig
-  { inDevId         :: Natural
-  , outDevId        :: Natural
-  , oneQnSec        :: Double
+  { oneQnSec        :: Double
   , chordMapConfigs :: [ChordMapEntry]
   } deriving (Show, Generic)
 
@@ -80,11 +79,6 @@ main = do
   hSetBuffering stdin NoBuffering
   hFlush stdout
 
-  (inDevs, outDevs) <- getAllDevices
-  putStrLn "input devices:"
-  mapM_ print inDevs
-  putStrLn "output devices:"
-  mapM_ print outDevs
   config <- Dhall.input Dhall.auto "./config/config.dhall" :: IO FullConfig
   print config
 
@@ -94,16 +88,18 @@ main = do
   loopExitDoneSig <- newMVar ()
   tChordName <- newTVarIO ""
   tUiProgress <- newTVarIO 0
-  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress)
+  tUiDevices <- let f = map (bimap id name)
+                in getAllDevices >>= (newTVarIO . (bimap f f))
+  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress tUiDevices)
   initializeMidi
   let
     loop :: IO ()
     loop = do
       i <- takeMVar mUiInput :: IO UiInput
       case i of
-        UiStart -> do
+        (UiStart inDev outDev) -> do
           _ <- tryTakeMVar loopExitDoneSig
-          _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig tChordName tUiProgress config 
+          _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig tChordName tUiProgress config inDev outDev
           putStrLn "Loop Started."
           loop
         UiStop -> do
@@ -120,8 +116,9 @@ main = do
   loop
   terminateMidi
 
-mainLoop :: MVar () -> MVar () -> TVar String -> TVar Int -> FullConfig -> IO ()
-mainLoop exitSig exitDoneSig tChordName tUiProgress config = do
+mainLoop :: MVar () -> MVar () -> TVar String -> TVar Int -> FullConfig
+            -> InputDeviceID -> OutputDeviceID -> IO ()
+mainLoop exitSig exitDoneSig tChordName tUiProgress config inDev outDev = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     tPushingKeys <- newTVarIO Map.empty
@@ -131,15 +128,13 @@ mainLoop exitSig exitDoneSig tChordName tUiProgress config = do
     putStrLn ("Clearing MIDI Devices...")
     wait 0.5
     let
-      inDev = fromIntegral $ inDevId config
-      outDev = fromIntegral $ outDevId config
       cMaps = genChordMap $ chordMapConfigs config
       qnSec = oneQnSec config
       op = do
         putStrLn ("Initializing MIDI Devices...")
         _ <- forkIO (clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName tUiProgress)
-        _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
-        _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
+        _ <- forkIO (midiInRec inDev inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
+        _ <- forkIO (midiOutRec 0 outDev inBuf genBuf stopSig) -- take from buffer and output
         putStrLn ("MIDI I/O services started.")
         detectExitLoop stopSig -- should only exit this via handleCtrlC
       closeOp = do
