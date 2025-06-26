@@ -105,6 +105,7 @@ handleEvent mUiInput uiOutput wenv node model evt =
     AppStopDone -> [Model $ model & playing .~ PlayStopped]
     AppDispose -> [Task disposeTask]
     AppExit -> [Task exitTask]
+    AppExitDone -> []
     AppUpdateChord name -> [Model $ model & chordName .~ name]
     AppUpdateProgress x -> [Model $ model & progress .~ x]
     AppUpdateDevices xs -> [Model $ model & devices .~ xs]
