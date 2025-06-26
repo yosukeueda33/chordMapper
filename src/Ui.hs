@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Ui (uiMain, UiInput(..)) where
+module Ui (uiMain, UiInput(..), UiOutput(..)) where
 
 import Control.Lens
 import qualified Data.Text as T
@@ -22,6 +22,11 @@ data AppModel = AppModel {
   _playing :: PlayState,
   _progress :: Int
 } deriving (Eq, Show)
+
+data UiOutput = UiOutput {
+  tChordName :: TVar String,
+  tProgress :: TVar Int
+}
 
 data AppEvent
   = AppInit
@@ -61,21 +66,21 @@ genProgressString x
   | otherwise = ""
 
 handleEvent
-  :: MVar UiInput -> TVar String -> TVar Int
+  :: MVar UiInput -> UiOutput
   -> WidgetEnv AppModel AppEvent
   -> WidgetNode AppModel AppEvent
   -> AppModel
   -> AppEvent
   -> [AppEventResponse AppModel AppEvent]
-handleEvent mUiInput tChordName tProgress wenv node model evt =
+handleEvent mUiInput uiOutput wenv node model evt =
   let
     startTask = putMVar mUiInput UiStart >> return AppStartDone
     stopTask = putMVar mUiInput UiStop >> return AppStopDone
     disposeTask = return AppDisposeDone
     exitTask = putMVar mUiInput UiExit >> return AppExitDone
   in case evt of
-    AppInit -> [ Producer $ chordUpdateProducer tChordName
-               , Producer $ progressProducer tProgress]
+    AppInit -> [ Producer $ chordUpdateProducer $ tChordName uiOutput
+               , Producer $ progressProducer $ tProgress uiOutput]
     AppStartStop -> case model ^. playing of
                       Playing -> [ Task stopTask
                                  , Model $ model & playing .~ PlayStopping
@@ -106,9 +111,9 @@ progressProducer tProgress sendMsg = do
   threadDelay 10000
   progressProducer tProgress sendMsg
 
-uiMain :: MVar UiInput -> TVar String -> TVar Int -> IO ()
-uiMain mUiInput tChordName tProgress = do
-  startApp model (handleEvent mUiInput tChordName tProgress) buildUI config
+uiMain :: MVar UiInput -> UiOutput -> IO ()
+uiMain mUiInput uiOutput = do
+  startApp model (handleEvent mUiInput uiOutput) buildUI config
   where
     config = [
       appWindowTitle "KANNASHI chordMapper",

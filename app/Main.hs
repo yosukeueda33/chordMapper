@@ -94,7 +94,7 @@ main = do
   loopExitDoneSig <- newMVar ()
   tChordName <- newTVarIO ""
   tUiProgress <- newTVarIO 0
-  _ <- forkIO $ uiMain mUiInput tChordName tUiProgress
+  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress)
   initializeMidi
   let
     loop :: IO ()
