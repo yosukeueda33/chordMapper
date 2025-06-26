@@ -88,9 +88,9 @@ main = do
   loopExitDoneSig <- newMVar ()
   tChordName <- newTVarIO ""
   tUiProgress <- newTVarIO 0
-  tUiDevices <- let f = map (bimap id name)
-                in getAllDevices >>= (newTVarIO . (bimap f f))
-  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress tUiDevices)
+  devices <- let f = map $ bimap id name
+             in bimap f f <$> getAllDevices 
+  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress) devices
   initializeMidi
   let
     loop :: IO ()

@@ -18,19 +18,19 @@ import Types
 
 data PlayState = PlayStopped | PlayStopping | Playing deriving (Eq, Show)
 
+type DeviceLists = ([(InputDeviceID, String)], [(OutputDeviceID, String)])
+
 data AppModel = AppModel {
   _chordName :: String,
   _playing :: PlayState,
   _progress :: Int,
-  _devices :: ([(InputDeviceID, String)], [(OutputDeviceID, String)]),
   _inDev :: (InputDeviceID, String),
   _outDev :: (OutputDeviceID, String)
 } deriving (Eq, Show)
 
 data UiOutput = UiOutput {
   tChordName :: TVar String,
-  tProgress :: TVar Int,
-  tDevices :: TVar ([(InputDeviceID, String)], [(OutputDeviceID, String)])
+  tProgress :: TVar Int
 }
 
 data AppEvent
@@ -45,7 +45,6 @@ data AppEvent
   | AppExitDone
   | AppUpdateChord String 
   | AppUpdateProgress Int 
-  | AppUpdateDevices ([(InputDeviceID, String)], [(OutputDeviceID, String)])
   deriving (Eq, Show)
 
 data UiInput
@@ -56,15 +55,16 @@ data UiInput
 makeLenses 'AppModel
 
 buildUI
-  :: WidgetEnv AppModel AppEvent
+  :: DeviceLists
+  -> WidgetEnv AppModel AppEvent
   -> AppModel
   -> WidgetNode AppModel AppEvent
-buildUI wenv model = widgetTree where
+buildUI devices wenv model = widgetTree where
   widgetTree = vstack [
       label_ (T.pack $ model ^. chordName) [resizeFactor 1] `styleBasic` [textSize 24],
       label_ (T.pack . genProgressString $  model ^. progress) [resizeFactor 1] `styleBasic` [textSize 24],
-      selectList inDev (fst $ model ^. devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
-      selectList outDev (snd$ model ^. devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
+      selectList inDev (fst devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
+      selectList outDev (snd devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
       button "Play/Stop" AppStartStop
     ] `styleBasic` [padding 10]
 
@@ -92,7 +92,6 @@ handleEvent mUiInput uiOutput wenv node model evt =
   in case evt of
     AppInit -> [ Producer $ chordUpdateProducer $ tChordName uiOutput
                , Producer $ progressProducer $ tProgress uiOutput
-               , Producer $ devicesProducer $ tDevices uiOutput
                ]
     AppStartStop -> case model ^. playing of
                       Playing -> [ Task stopTask
@@ -108,7 +107,6 @@ handleEvent mUiInput uiOutput wenv node model evt =
     AppExitDone -> []
     AppUpdateChord name -> [Model $ model & chordName .~ name]
     AppUpdateProgress x -> [Model $ model & progress .~ x]
-    AppUpdateDevices xs -> [Model $ model & devices .~ xs]
 
 chordUpdateProducer :: TVar String
                     -> (AppEvent -> IO ()) -> IO ()
@@ -126,17 +124,9 @@ progressProducer tProgress sendMsg = do
   threadDelay 10000
   progressProducer tProgress sendMsg
 
-devicesProducer :: TVar ([(InputDeviceID, String)], [(OutputDeviceID, String)])
-                    -> (AppEvent -> IO ()) -> IO ()
-devicesProducer tDevices sendMsg = do
-  readTVarIO tDevices
-    >>= sendMsg . AppUpdateDevices
-  threadDelay 1000000
-  devicesProducer tDevices sendMsg
-
-uiMain :: MVar UiInput -> UiOutput -> IO ()
-uiMain mUiInput uiOutput = do
-  startApp model (handleEvent mUiInput uiOutput) buildUI config
+uiMain :: MVar UiInput -> UiOutput -> DeviceLists -> IO ()
+uiMain mUiInput uiOutput devices = do
+  startApp model (handleEvent mUiInput uiOutput) (buildUI devices) config
   where
     config = [
       appWindowTitle "KANNASHI chordMapper",
@@ -146,4 +136,4 @@ uiMain mUiInput uiOutput = do
       appDisposeEvent AppDispose,
       appExitEvent AppExit
       ]
-    model = AppModel "" PlayStopped 0 ([], []) (unsafeInputID 0, "") (unsafeOutputID 0, "")
+    model = AppModel "" PlayStopped 0 (unsafeInputID 0, "") (unsafeOutputID 0, "")
