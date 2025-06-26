@@ -4,7 +4,7 @@
 module Ui (uiMain, UiInput(..)) where
 
 import Control.Lens
-import Data.Text as T
+import qualified Data.Text as T
 import Monomer
 
 import Control.Concurrent.MVar
@@ -19,7 +19,8 @@ data PlayState = PlayStopped | PlayStopping | Playing deriving (Eq, Show)
 
 data AppModel = AppModel {
   _chordName :: String,
-  _playing :: PlayState
+  _playing :: PlayState,
+  _progress :: Int
 } deriving (Eq, Show)
 
 data AppEvent
@@ -33,6 +34,7 @@ data AppEvent
   | AppExit
   | AppExitDone
   | AppUpdateChord String 
+  | AppUpdateProgress Int 
   deriving (Eq, Show)
 
 data UiInput
@@ -49,26 +51,31 @@ buildUI
 buildUI wenv model = widgetTree where
   widgetTree = vstack [
       label_ (T.pack $ model ^. chordName) [resizeFactor 1] `styleBasic` [textSize 24],
+      label_ (T.pack . genProgressString $  model ^. progress) [resizeFactor 1] `styleBasic` [textSize 24],
       button "Play/Stop" AppStartStop
     ] `styleBasic` [padding 10]
 
+genProgressString :: Int -> String
+genProgressString x
+  | x >= 0 = concat . flip replicate "o" $ x `div` 6
+  | otherwise = ""
 
 handleEvent
-  :: MVar UiInput
-  -> TVar String
+  :: MVar UiInput -> TVar String -> TVar Int
   -> WidgetEnv AppModel AppEvent
   -> WidgetNode AppModel AppEvent
   -> AppModel
   -> AppEvent
   -> [AppEventResponse AppModel AppEvent]
-handleEvent mUiInput tChordName wenv node model evt =
+handleEvent mUiInput tChordName tProgress wenv node model evt =
   let
     startTask = putMVar mUiInput UiStart >> return AppStartDone
     stopTask = putMVar mUiInput UiStop >> return AppStopDone
     disposeTask = return AppDisposeDone
     exitTask = putMVar mUiInput UiExit >> return AppExitDone
   in case evt of
-    AppInit -> [Producer $ chordUpdateProducer tChordName]
+    AppInit -> [ Producer $ chordUpdateProducer tChordName
+               , Producer $ progressProducer tProgress]
     AppStartStop -> case model ^. playing of
                       Playing -> [ Task stopTask
                                  , Model $ model & playing .~ PlayStopping
@@ -81,6 +88,7 @@ handleEvent mUiInput tChordName wenv node model evt =
     AppDispose -> [Task disposeTask]
     AppExit -> [Task exitTask]
     AppUpdateChord name -> [Model $ model & chordName .~ name]
+    AppUpdateProgress x -> [Model $ model & progress .~ x]
 
 chordUpdateProducer :: TVar String
                     -> (AppEvent -> IO ()) -> IO ()
@@ -90,9 +98,17 @@ chordUpdateProducer tChordName sendMsg = do
     threadDelay 10000
     chordUpdateProducer tChordName sendMsg
 
-uiMain :: MVar UiInput -> TVar String -> IO ()
-uiMain mUiInput tChordName = do
-  startApp model (handleEvent mUiInput tChordName) buildUI config
+progressProducer :: TVar Int
+                    -> (AppEvent -> IO ()) -> IO ()
+progressProducer tProgress sendMsg = do
+  readTVarIO tProgress
+    >>= sendMsg . AppUpdateProgress
+  threadDelay 10000
+  progressProducer tProgress sendMsg
+
+uiMain :: MVar UiInput -> TVar String -> TVar Int -> IO ()
+uiMain mUiInput tChordName tProgress = do
+  startApp model (handleEvent mUiInput tChordName tProgress) buildUI config
   where
     config = [
       appWindowTitle "KANNASHI chordMapper",
@@ -102,4 +118,4 @@ uiMain mUiInput tChordName = do
       appDisposeEvent AppDispose,
       appExitEvent AppExit
       ]
-    model = AppModel "" PlayStopped
+    model = AppModel "" PlayStopped 0

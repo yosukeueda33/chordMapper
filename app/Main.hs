@@ -93,7 +93,8 @@ main = do
   loopExitSig <- newEmptyMVar
   loopExitDoneSig <- newMVar ()
   tChordName <- newTVarIO ""
-  _ <- forkIO $ uiMain mUiInput tChordName
+  tUiProgress <- newTVarIO 0
+  _ <- forkIO $ uiMain mUiInput tChordName tUiProgress
   initializeMidi
   let
     loop :: IO ()
@@ -102,7 +103,7 @@ main = do
       case i of
         UiStart -> do
           _ <- tryTakeMVar loopExitDoneSig
-          _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig tChordName config 
+          _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig tChordName tUiProgress config 
           putStrLn "Loop Started."
           loop
         UiStop -> do
@@ -119,8 +120,8 @@ main = do
   loop
   terminateMidi
 
-mainLoop :: MVar () -> MVar () -> TVar String -> FullConfig -> IO ()
-mainLoop exitSig exitDoneSig tChordName config = do
+mainLoop :: MVar () -> MVar () -> TVar String -> TVar Int -> FullConfig -> IO ()
+mainLoop exitSig exitDoneSig tChordName tUiProgress config = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     tPushingKeys <- newTVarIO Map.empty
@@ -136,7 +137,7 @@ mainLoop exitSig exitDoneSig tChordName config = do
       qnSec = oneQnSec config
       op = do
         putStrLn ("Initializing MIDI Devices...")
-        _ <- forkIO (clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName)
+        _ <- forkIO (clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName tUiProgress)
         _ <- forkIO (midiInRec (unsafeInputID inDev) inBuf tPushingKeys tChordMap stopSig) -- poll input and add to buffer
         _ <- forkIO (midiOutRec 0 (unsafeOutputID outDev) inBuf genBuf stopSig) -- take from buffer and output
         putStrLn ("MIDI I/O services started.")
@@ -157,8 +158,8 @@ mainLoop exitSig exitDoneSig tChordName config = do
     closeOp
 
 clockLoop :: Double -> [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
-          -> TVar Bool -> TVar String -> IO ()
-clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName =
+          -> TVar Bool -> TVar String -> TVar Int -> IO ()
+clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName tUiProgress =
   let
     f x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
@@ -167,11 +168,13 @@ clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName =
       atomically $ do
         writeTVar tChordMap m
         writeTVar tChordName name
+        writeTVar tUiProgress duration
       f 0xFA 
     stop = do 
       f 0xFC
       atomically $ do
         writeTVar tChordName ""
+        writeTVar tUiProgress 0
       putStrLn "closed clock"
     loop iChord iWait = do
       stopNow <- readTVarIO preStopSig
@@ -181,6 +184,7 @@ clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName =
         f 0xF8
         let
           (duration, name, m) = cMaps !! iChord
+        atomically $ writeTVar tUiProgress $ duration - iWait
         if iWait >= (duration - 1) then do
           let nextIwait  = 0
               nextIchord = (iChord + 1) `mod` length cMaps 
