@@ -30,7 +30,9 @@ import Monomer
 import Dhall
 
 import Chord (ChordType(..), Chord(..), Tension(..), chordTones
-             , getVoicingBetweenOn, getEnvelopeDifference, degreeToChord7thOneTension)
+             , chordTonesTensionAsPassing
+             , getVoicingBetweenOn, getEnvelopeDifference
+             , degreeToChord7thOneTension, degreeToChord7thOnePassingTension)
 import Ui
 import Types
 
@@ -217,19 +219,28 @@ genChordMap cfgs =
     chords = map (f . chordCnf) cfgs :: [Chord]
       where
         f :: ChordMapConfig -> Chord
-        f (Deg (DegreeChord key scale deg)) = degreeToChord7thOneTension key' scale' deg'
+        f (Deg (DegreeChord key scale deg))
+            = degreeToChord7thOnePassingTension key' scale' deg'
           where
             key' = read $ T.unpack key :: PitchClass
             scale' = sToMode $ T.unpack scale :: Mode
             sToMode s = case s of
               "Major" -> Major
               "Minor" -> Minor
+              "Ionian" -> Ionian
+              "Dorian" -> Dorian
+              "Phrygian" -> Phrygian
+              "Lydian" -> Lydian
+              "Mixolydian" -> Mixolydian
+              "Aeolian" -> Aeolian
+              "Locrian" -> Locrian
               _ -> error "config error"
             deg' = fromIntegral deg :: Int
         f _ = error "config error"
 
     smoothedChords = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
-                   $ map (fromJust . chordTones) chords
+                   $ map (fromJust . chordTonesTensionAsPassing) chords
+    -- smoothedChords = map (fromJust . chordTonesTensionAsPassing) chords
     mappers = map getKeyMap smoothedChords :: [ChordKeyMap]
     durations = (map (fromIntegral . durationCnf) cfgs)
   in

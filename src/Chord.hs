@@ -1,6 +1,7 @@
 module Chord (
   ChordType(..), Chord(..), Tension(..), chordTones, getVoicingBetweenOn,
-  getEnvelopeDifference, degreeToChord7thOneTension) where
+  getEnvelopeDifference, degreeToChord7thOneTension,
+  degreeToChord7thOnePassingTension, chordTonesTensionAsPassing) where
 
 import Euterpea
 import Interval
@@ -9,6 +10,7 @@ import Data.Maybe
 import Data.List
 import Codec.Midi (Key)
 import Control.Monad (guard)
+import Data.Bool (bool)
 
 
 data ChordType
@@ -16,10 +18,12 @@ data ChordType
   | ChMinor
   | ChMinorFlat5
   | ChAug
+  | ChAugMajor7th
   | ChSus2
   | ChSus4
   | ChDim
   | Ch7th
+  | Ch7thFlat5
   | ChMajor7th
   | ChMinor7th
   | ChMinorMajor7th
@@ -51,6 +55,28 @@ allTension = [minBound .. maxBound]
 data Chord = Chord PitchClass ChordType [Tension] deriving (Show)
 type ChordPitch = [AbsPitch]
 
+intervals :: ChordType -> [Interval]
+intervals ChMajor = [iPerf 1, iMaj 3, iPerf 5]
+intervals ChMinor = [iPerf 1, iMin 3, iPerf 5]
+intervals ChMinorFlat5 = [iPerf 1, iMin 3, iDim 5]
+intervals ChAug = [iPerf 1, iMaj 3, iAug 5]
+intervals ChAugMajor7th = [iPerf 1, iMaj 3, iAug 5, iMaj 7]
+intervals ChSus2 = [iPerf 1, iMaj 2, iPerf 5]
+intervals ChSus4 = [iPerf 1, iPerf 4, iPerf 5]
+intervals Ch7th = [iPerf 1, iMaj 3, iPerf 5, iMin 7]
+intervals Ch7thFlat5 = [iPerf 1, iMaj 3, iDim 5, iMin 7]
+intervals ChMajor7th = [iPerf 1, iMaj 3, iPerf 5, iMaj 7]
+intervals ChMinor7th = [iPerf 1, iMin 3, iPerf 5, iMin 7]
+intervals ChMinorMajor7th = [iPerf 1, iMin 3, iPerf 5, iMaj 7]
+intervals ChMinor7thFlat5 = [iPerf 1, iMin 3, iDim 5, iMin 7]
+intervals Ch6th = [iPerf 1, iMaj 3, iPerf 5, iMaj 6]
+intervals ChMinor6th = [iPerf 1, iMin 3, iPerf 5, iMaj 6]
+intervals ChDim = [iPerf 1, iMin 3, iDim 5]
+intervals ChDim7th = [iPerf 1, iMin 3, iDim 5, iDim 7]
+intervals Ch7thSus2 = [iPerf 1, iMaj 2, iPerf 5, iMin 7]
+intervals Ch7thSus4 = [iPerf 1, iPerf 4, iPerf 5, iMin 7]
+intervals ChBlackAddor = [iPerf 1, iAug 4, iMin 7, iMaj 9]
+
 chordTones :: Chord -> Maybe ChordPitch
 chordTones (Chord pc chordType tensions) = mapM toPitch
                                   $ intervals chordType ++ map tension tensions
@@ -58,25 +84,17 @@ chordTones (Chord pc chordType tensions) = mapM toPitch
     toPitch :: Interval -> Maybe AbsPitch
     toPitch i = (root +) <$> intervalPitch i 
     root = pcToInt pc
-    intervals :: ChordType -> [Interval]
-    intervals ChMajor = [iPerf 1, iMaj 3, iPerf 5]
-    intervals ChMinor = [iPerf 1, iMin 3, iPerf 5]
-    intervals ChMinorFlat5 = [iPerf 1, iMin 3, iDim 5]
-    intervals ChAug = [iPerf 1, iMaj 3, iAug 5]
-    intervals ChSus2 = [iPerf 1, iMaj 2, iPerf 5]
-    intervals ChSus4 = [iPerf 1, iPerf 4, iPerf 5]
-    intervals Ch7th = [iPerf 1, iMaj 3, iPerf 5, iMin 7]
-    intervals ChMajor7th = [iPerf 1, iMaj 3, iPerf 5, iMaj 7]
-    intervals ChMinor7th = [iPerf 1, iMin 3, iPerf 5, iMin 7]
-    intervals ChMinorMajor7th = [iPerf 1, iMin 3, iPerf 5, iMaj 7]
-    intervals ChMinor7thFlat5 = [iPerf 1, iMin 3, iDim 5, iMin 7]
-    intervals Ch6th = [iPerf 1, iMaj 3, iPerf 5, iMaj 6]
-    intervals ChMinor6th = [iPerf 1, iMin 3, iPerf 5, iMaj 6]
-    intervals ChDim = [iPerf 1, iMin 3, iDim 5]
-    intervals ChDim7th = [iPerf 1, iMin 3, iDim 5, iDim 7]
-    intervals Ch7thSus2 = [iPerf 1, iMaj 2, iPerf 5, iMin 7]
-    intervals Ch7thSus4 = [iPerf 1, iPerf 4, iPerf 5, iMin 7]
-    intervals ChBlackAddor = [iPerf 1, iAug 4, iMin 7, iMaj 9]
+
+chordTonesTensionAsPassing :: Chord -> Maybe ChordPitch
+chordTonesTensionAsPassing (Chord pc chordType tensions) =
+  -- (mapM toPitch $ intervals chordType)
+  (++) <$> (mapM toPitch $ intervals chordType)
+       <*> ((map (subtract 12)) <$> (mapM (toPitch) $ map tension tensions))
+      --  <*> (mapM (toPitch) $ map tension tensions)
+  where
+    toPitch :: Interval -> Maybe AbsPitch
+    toPitch i = (root +) <$> intervalPitch i 
+    root = pcToInt pc
 
 tension :: Tension -> Interval
 tension TsFlat9th = iMin 9 
@@ -142,6 +160,9 @@ type Degree = Int
 intToPc :: Int -> PitchClass
 intToPc i = [C, Df, D, Ef, E, F, Gf, G, Af, A, Bf, B] !! (i `mod` 12)
 
+rollLeft :: Int -> [a] -> [a]
+rollLeft n xs = let l = length xs in take l . drop (n `mod` l) . cycle $ xs
+
 degreeToChord7th :: PitchClass -> Mode -> Degree -> Chord
 degreeToChord7th pc mode deg = Chord root ((types mode) !! ideg) []
   where
@@ -155,14 +176,40 @@ degreeToChord7th pc mode deg = Chord root ((types mode) !! ideg) []
                   , ChMinor7th
                   , ChMinor7thFlat5
                   ]
+    -- Natural minor
     types Minor = [ ChMinor7th
                   , ChMinor7thFlat5
                   , ChMajor7th
                   , ChMinor7th
                   , ChMinor7th
                   , ChMajor7th
-                  , Ch7th
+                  , Ch7thFlat5
                   ]
+    -- -- Harmonic minor
+    -- types Minor = [ ChMajor7th
+    --               , ChMinor7thFlat5
+    --               , ChAugMajor7th
+    --               , ChMinor7th
+    --               , Ch7th
+    --               , ChMajor7th
+    --               , ChDim7th
+    --               ]
+    -- Melodic minor.
+    -- types Minor = [ ChMinorMajor7th
+    --               , ChMinor7th
+    --               , ChAugMajor7th
+    --               , Ch7th
+    --               , Ch7th
+    --               , ChMinor7thFlat5
+    --               , ChMinor7thFlat5
+    --               ]
+
+    types s =
+      let
+        modes = [Ionian, Dorian, Phrygian, Lydian, Mixolydian, Aeolian, Locrian]
+        shiftNum = snd . head . filter ((==) s . fst) $ zip modes [0..] :: Int
+      in
+        rollLeft shiftNum $ types Major
 
 getScale :: PitchClass -> Mode -> [Key]
 getScale rootPc = map (((pcToInt rootPc) +) . fromJust . intervalPitch) . scale
@@ -182,76 +229,200 @@ getScale rootPc = map (((pcToInt rootPc) +) . fromJust . intervalPitch) . scale
                   , iPerf 4 
                   , iPerf 5 
                   , iMin 6 
-                  , iMaj 7 
+                  , iMin 7 
                   ]
+    -- -- Harmonic minor
+    -- scale Minor = [ iPerf 1
+    --               , iMaj 2 
+    --               , iMin 3 
+    --               , iPerf 4 
+    --               , iPerf 5 
+    --               , iMin 6 
+    --               , iMaj 7 
+    --               ]
+    -- Merodic minor
+    -- scale Minor = [ iPerf 1
+    --               , iMaj 2 
+    --               , iMin 3 
+    --               , iPerf 4 
+    --               , iPerf 5 
+    --               , iMaj 6 
+    --               , iMaj 7 
+    --               ]
+    scale Ionian = scale Major
+    scale Dorian = [ iPerf 1
+                   , iMaj 2 
+                   , iMin 3 
+                   , iPerf 4 
+                   , iPerf 5 
+                   , iMaj 6 
+                   , iMin 7 
+                   ]
+    scale Phrygian = [ iPerf 1
+                     , iMin 2 
+                     , iMin 3 
+                     , iPerf 4 
+                     , iPerf 5 
+                     , iMin 6 
+                     , iMin 7 
+                     ]
+    scale Lydian = [ iPerf 1
+                   , iMaj 2 
+                   , iMaj 3 
+                   , iAug 4 
+                   , iPerf 5 
+                   , iMaj 6 
+                   , iMaj 7 
+                   ]
+    scale Mixolydian = [ iPerf 1
+                       , iMaj 2 
+                       , iMaj 3 
+                       , iPerf 4 
+                       , iPerf 5 
+                       , iMaj 6 
+                       , iMin 7 
+                       ]
+    scale Aeolian = scale Minor
+    scale Locrian = [ iPerf 1
+                    , iMin 2 
+                    , iMin 3 
+                    , iPerf 4 
+                    , iDim 5 
+                    , iMin 6 
+                    , iMin 7 
+                    ]
 
-findTension :: PitchClass -> Mode -> Chord -> [Tension]
-findTension keyPc mode (Chord rootPc typ _) = do
-  let ps = fromJust . chordTones $ Chord rootPc typ []
-  p <- ps
-  t <- allTension
-  let i = fromJust . intervalPitch $ tension t
-  guard $ elem ((p + i) `mod` 12) (getScale keyPc mode)
-  return t
+findTension :: PitchClass -> Mode -> Chord -> Degree -> [Tension]
+findTension keyPc mode (Chord rootPc typ _) deg =
+  let
+    scaledTensions = do
+      let p = pcToInt rootPc
+      t <- allTension
+      let
+        i = fromJust . intervalPitch $ tension t
+        scaleNotes = map (flip mod 12) (getScale keyPc mode)
+      guard $ elem ((p + i) `mod` 12) scaleNotes
+      return t
+    addAltered ts = if deg == 5
+      then
+        let
+          tgs = [ [Ts9th, TsFlat9th, TsSharp9th]
+                , [Ts11th, TsSharp11th]
+                , [Ts13th, TsFlat13th]
+                ]
+        in concat $ map (\tg -> bool [] tg $ any (`elem` ts) tg) tgs
+      else ts
+  in addAltered scaledTensions 
 
 degreeToChord7thOneTension :: PitchClass -> Mode -> Degree -> Chord
 degreeToChord7thOneTension pc mode deg = Chord root typ tens
   where
     ch7th@(Chord root typ _) = degreeToChord7th pc mode deg
-    tens = [minimum $ findTension pc mode ch7th]
+    tens = [minimum $ findTension pc mode ch7th deg]
+
+findSafePassingTension :: PitchClass -> Mode -> Chord -> Degree -> [Tension]
+findSafePassingTension keyPc mode chord@(Chord rootPc typ _) deg =
+  let
+    onScaleTension = findTension keyPc mode chord deg
+    findPassing ts = do
+                t <- ts
+                let i = fromJust . intervalPitch $ tension t
+                    passingTone = (pcToInt rootPc) + i - 12
+                    ps = fromJust . chordTones $ Chord rootPc typ []
+                guard $ all ((> 1) . abs . (passingTone - )) ps
+                return t
+    onScalePassing = findPassing onScaleTension
+    anyPassing = findPassing allTension
+  in if null onScalePassing then anyPassing else onScalePassing
+
+
+degreeToChord7thOnePassingTension :: PitchClass -> Mode -> Degree -> Chord
+degreeToChord7thOnePassingTension pc mode deg = Chord root typ tens
+  where
+    ch7th@(Chord root typ _) = degreeToChord7th pc mode deg
+    tens = [minimum $ findSafePassingTension pc mode ch7th deg]
 
 main :: IO ()
 main = do
-  let two  = Chord D ChMinor7th [Ts9th]
-      five = Chord G Ch7th [Ts9th]
-      one  = Chord C ChMajor7th [Ts9th]
-      six  = Chord A ChMinor7th [Ts9th]
-  -- print $ chordTones chord
-  -- print $ getVoicings 1 1 . fromJust $ chordTones two
-  print $ chordTones two
-  print $ chordTones five
-  print $ chordTones one
-  print $ chordTones six
+  -- let two  = Chord D ChMinor7th [Ts9th]
+  --     five = Chord G Ch7th [Ts9th]
+  --     one  = Chord C ChMajor7th [Ts9th]
+  --     six  = Chord A ChMinor7th [Ts9th]
+  -- -- print $ chordTones chord
+  -- -- print $ getVoicings 1 1 . fromJust $ chordTones two
+  -- print $ chordTones two
+  -- print $ chordTones five
+  -- print $ chordTones one
+  -- print $ chordTones six
 
-  let smoothFive = getVoicingBetweenOn 1 1 getEnvelopeDifference
-            (fromJust $ chordTones two) (fromJust $ chordTones five)
-  print smoothFive
-  let smoothOne = getVoicingBetweenOn 1 1 getEnvelopeDifference
-            smoothFive (fromJust $ chordTones one)
-  print smoothOne
-  let smoothSix = getVoicingBetweenOn 1 1 getEnvelopeDifference
-            smoothOne (fromJust $ chordTones six)
-  print smoothSix
+  -- let smoothFive = getVoicingBetweenOn 1 1 getEnvelopeDifference
+  --           (fromJust $ chordTones two) (fromJust $ chordTones five)
+  -- print smoothFive
+  -- let smoothOne = getVoicingBetweenOn 1 1 getEnvelopeDifference
+  --           smoothFive (fromJust $ chordTones one)
+  -- print smoothOne
+  -- let smoothSix = getVoicingBetweenOn 1 1 getEnvelopeDifference
+  --           smoothOne (fromJust $ chordTones six)
+  -- print smoothSix
 
-  let smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
-          $ map (fromJust . chordTones) [two, five, one, six]
-  print smooth2516
+  -- let smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
+  --         $ map (fromJust . chordTones) [two, five, one, six]
+  -- print smooth2516
 
-  let chordsToMusic = line . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 60))
-  let just2516m = chordsToMusic $ map (fromJust . chordTones) [two, five, one, six]
-  let smooth2516m = chordsToMusic smooth2516
-  writeMidi "just2516.midi" just2516m
-  writeMidi "smooth2516.midi" smooth2516m 
-  writeMidi "2516s.midi" $ just2516m :+: smooth2516m
+  -- let chordsToMusic = line . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 60))
+  -- let just2516m = chordsToMusic $ map (fromJust . chordTones) [two, five, one, six]
+  -- let smooth2516m = chordsToMusic smooth2516
+  -- writeMidi "just2516.midi" just2516m
+  -- writeMidi "smooth2516.midi" smooth2516m 
+  -- writeMidi "2516s.midi" $ just2516m :+: smooth2516m
 
-  let chordsToMusic = line . map (chord . map (note en . (+) 60))
-  let fives = getVoicings 1 1 . fromJust $ chordTones five
-  let ones = getVoicings 1 1 . fromJust $ chordTones one
-  writeMidi "G9thInv.midi" $ chordsToMusic fives
-  writeMidi "ChMajor9thInv.midi" $ chordsToMusic ones
+  -- let chordsToMusic = line . map (chord . map (note en . (+) 60))
+  -- let fives = getVoicings 1 1 . fromJust $ chordTones five
+  -- let ones = getVoicings 1 1 . fromJust $ chordTones one
+  -- writeMidi "G9thInv.midi" $ chordsToMusic fives
+  -- writeMidi "ChMajor9thInv.midi" $ chordsToMusic ones
 
-  let aMinorScale = map (`mod` 12) $ getScale A Minor
-  print aMinorScale
-  let aMinor2 = degreeToChord7th A Minor 2
-  print aMinor2
-  let aMinor2t = degreeToChord7thOneTension A Minor 2
-  print aMinor2t
-  let aMinor251 = map (degreeToChord7thOneTension A Minor) [2, 5, 1]
-  print aMinor251
-  let chordsToMusic = line . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 48))
-  let justAMinor251 = chordsToMusic $ map (fromJust . chordTones) aMinor251
-  print justAMinor251
-  writeMidi "justAMinor251.midi" justAMinor251
-  let smoothAMinor251 = chordsToMusic . scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
-          $ map (fromJust . chordTones) aMinor251
-  writeMidi "smoothAMinor251.midi" smoothAMinor251
+  -- let aMinorScale = map (`mod` 12) $ getScale A Minor
+  -- print aMinorScale
+  -- let aMinor2 = degreeToChord7th A Minor 2
+  -- print aMinor2
+  -- let aMinor2t = degreeToChord7thOneTension A Minor 2
+  -- print aMinor2t
+
+  -- let aMinor251 = map (degreeToChord7thOneTension A Minor) [2, 5, 1]
+  -- print aMinor251
+
+  -- let
+  --   deg = 2
+  --   ch7th = degreeToChord7th A Minor deg
+  --   tens = [findTension A Minor ch7th deg]
+  -- print $ map (flip mod 12) (getScale A Minor)
+  -- print $ ch7th
+  -- print tens
+
+  -- let chords = map (degreeToChord7thOnePassingTension C Minor) [4,5,3,6]
+  let chords = map (degreeToChord7thOnePassingTension F Minor) [1,4,3,5]
+  -- let chords = map (degreeToChord7thOnePassingTension A Minor) [4,1,5,6]
+  -- let chords = map (degreeToChord7thOnePassingTension D Minor) [ 1,2
+  --                                                              ,3
+  --                                                              ,4
+  --                                                              ,5
+  --                                                              ,6
+  --                                                              ,7
+  --                                                              ]
+  -- let allChords = do
+  --                   d <- [1..7]
+  --                   r <- [minBound .. maxBound]
+  --                   s <- [Major, Minor]
+  --                   return $ degreeToChord7thOnePassingTension r s d
+  -- print $ length allChords
+  print chords
+  let chordsToMusic = line
+                    . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 60))
+  let mus = chordsToMusic
+                    $ map (fromJust . chordTonesTensionAsPassing) chords
+  print mus
+  writeMidi "tmp.midi" mus
+  let smoothed = chordsToMusic . scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
+          $ map (fromJust . chordTonesTensionAsPassing) chords
+  writeMidi "smoothed.midi" smoothed
