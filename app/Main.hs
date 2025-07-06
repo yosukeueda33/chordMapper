@@ -158,45 +158,39 @@ clockLoop :: Double -> [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessag
           -> TVar Bool -> TVar String -> TVar Int -> IO ()
 clockLoop qnSec cMaps tChordMap genBuf preStopSig tChordName tUiProgress =
   let
-    f x = atomically
+    sendSingleMessage x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
-    start = do
-      let (duration, name, m) = cMaps !! 0
-      atomically $ do
-        writeTVar tChordMap m
-        writeTVar tChordName name
-        writeTVar tUiProgress duration
-      f 0xFA 
+    start = sendSingleMessage 0xFA -- realtime-clock start 
     stop = do 
-      f 0xFC
+      sendSingleMessage 0xFC -- realtime-clock stop
       atomically $ do
         writeTVar tChordName ""
         writeTVar tUiProgress 0
       putStrLn "closed clock"
-    loop iChord iWait = do
-      stopNow <- readTVarIO preStopSig
-      if stopNow then return () else do
-        -- The 24 is realtime-clock count of MIDI.
+
+    waitSingleTick sig = do
+      stopNow <- readTVarIO sig
+      when (not stopNow) $ do
         wait $ qnSec / 24.0
-        f 0xF8
-        let
-          (duration, name, m) = cMaps !! iChord
-        atomically $ writeTVar tUiProgress $ duration - iWait
-        if iWait >= (duration - 1) then do
-          let nextIwait  = 0
-              nextIchord = (iChord + 1) `mod` length cMaps 
-              (duration', name', m') = cMaps !! nextIchord
-          atomically $ writeTVar tChordMap m' 
-          atomically $ writeTVar tChordName name'
-          -- print $ "changed to" ++ name'
-          loop nextIchord nextIwait
-        else do
-          let nextIwait = iWait + 1
-          loop iChord nextIwait
+        sendSingleMessage 0xF8 -- realtime-clock tick
+
+    loop iChord = do
+      let (duration, name, m) = cMaps !! iChord
+      atomically $ do
+        writeTVar tChordMap m
+        writeTVar tChordName name
+      -- Ticking while chord duration.
+      mapM_ ( (>> waitSingleTick preStopSig)
+            . atomically . writeTVar tUiProgress ) $ reverse [0 .. (duration - 1)]
+      -- Go to next chord.
+      stopNow <- readTVarIO preStopSig
+      when (not stopNow)
+        . loop $ (iChord + 1) `mod` (length cMaps)
+
 
   in do
     start
-    loop 0 1
+    loop 0
     stop
 
 type ChordMap = (Int, String, ChordKeyMap)
