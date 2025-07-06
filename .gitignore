@@ -1,2 +1,6 @@
 .stack-work/
 *~
+*.midi
+*.cabal
+stack.yaml.lock
+.vscode/*
