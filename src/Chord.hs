@@ -1,7 +1,8 @@
 module Chord (
   ChordType(..), Chord(..), Tension(..), chordTones, getVoicingBetweenOn,
   getEnvelopeDifference, degreeToChord7thOneTension,
-  degreeToChord7thOnePassingTension, chordTonesTensionAsPassing) where
+  degreeToChord7thOnePassingTension, chordTonesTensionAsPassing,
+  addNoMin2ndTension ) where
 
 import Euterpea
 import Interval
@@ -341,6 +342,19 @@ degreeToChord7thOnePassingTension pc mode deg = Chord root typ tens
   where
     ch7th@(Chord root typ _) = degreeToChord7th pc mode deg
     tens = [minimum $ findSafePassingTension pc mode ch7th deg]
+
+addNoMin2ndTension :: Chord -> Chord
+addNoMin2ndTension (Chord rootPc typ _) =
+  let
+    ps = fromJust . chordTones $ Chord rootPc typ []
+    tens = minimum $ do
+      t <- allTension
+      let i = fromJust . intervalPitch $ tension t
+          passingTone = (pcToInt rootPc) + i - 12
+      guard $ all ((> 1) . abs . (passingTone - )) ps
+      return t
+  in Chord rootPc typ [tens]
+
 
 main :: IO ()
 main = do

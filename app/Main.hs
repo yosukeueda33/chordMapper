@@ -33,7 +33,8 @@ import Dhall
 import Chord (ChordType(..), Chord(..), Tension(..), chordTones
              , chordTonesTensionAsPassing
              , getVoicingBetweenOn, getEnvelopeDifference
-             , degreeToChord7thOneTension, degreeToChord7thOnePassingTension)
+             , degreeToChord7thOneTension, degreeToChord7thOnePassingTension
+             , addNoMin2ndTension)
 import Ui
 import Types
 
@@ -41,7 +42,6 @@ import Types
 data AbsoluteChord = AbsoluteChord
   { chordRoot    :: Text
   , chordType    :: Text
-  , chordTension :: [Text]
   } deriving (Show, Generic)
 
 data DegreeChord = DegreeChord
@@ -267,6 +267,12 @@ genChordMap cfgs =
                     , T.unpack scale
                     , " "
                     , show deg] :: String
+        f (ChordMapEntry dur ((Abs (AbsoluteChord root typ))))
+          = mconcat [ show dur
+                    , " "
+                    , T.unpack root
+                    , " "
+                    , T.unpack typ] :: String
         f cfg = show cfg
 
     chords = map (f . chordCnf) cfgs :: [Chord]
@@ -289,6 +295,10 @@ genChordMap cfgs =
               "Locrian" -> Locrian
               _ -> error "config error"
             deg' = fromIntegral deg :: Int
+        f (Abs (AbsoluteChord root typ)) = addNoMin2ndTension $ Chord root' typ' []
+          where
+            root' = read $ T.unpack root
+            typ' = read . ("Ch" ++) $ T.unpack typ
         f _ = error "config error"
 
     smoothedChords = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
