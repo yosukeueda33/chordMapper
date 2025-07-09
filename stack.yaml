@@ -33,7 +33,7 @@ snapshot: lts-14.27
 #   - wai
 packages:
 - .
-- ../Euterpea2
+- ./Euterpea2
 
 # Dependency packages to be pulled from upstream that are not in the snapshot.
 # These entries can reference officially published versions as well as
