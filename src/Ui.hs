@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Ui (uiMain, UiInput(..), UiUpdator, createUiThread) where
+module Ui (UiInput(..), UiUpdator, createUiThread) where
 
 import Control.Lens
 import qualified Data.Text as T
@@ -23,17 +23,19 @@ type DeviceLists = ([(InputDeviceID, String)], [(OutputDeviceID, String)])
 data AppModel = AppModel {
   _chordName :: String,
   _playing :: PlayState,
-  _progress :: Int,
+  _clockProgress :: Int,
+  _chordSetProgress :: Int,
   _inDev :: (InputDeviceID, String),
   _outDev :: (OutputDeviceID, String)
 } deriving (Eq, Show)
 
 data UiOutput = UiOutput {
   tChordName :: TVar String,
-  tProgress :: TVar Int
+  tClockProgress :: TVar Int,
+  tChordSetProgress :: TVar Int
 }
 
-type UiUpdator = (Maybe String, Maybe Int) -> IO ()
+type UiUpdator = (Maybe String, Maybe Int, Maybe Int) -> IO ()
 
 data AppEvent
   = AppInit
@@ -46,7 +48,8 @@ data AppEvent
   | AppExit
   | AppExitDone
   | AppUpdateChord String 
-  | AppUpdateProgress Int 
+  | AppUpdateClockProgress Int 
+  | AppUpdateChordSetProgress Int 
   deriving (Eq, Show)
 
 data UiInput
@@ -64,15 +67,16 @@ buildUI
 buildUI devices wenv model = widgetTree where
   widgetTree = vstack [
       label_ (T.pack $ model ^. chordName) [resizeFactor 1] `styleBasic` [textSize 24],
-      label_ (T.pack . genProgressString $  model ^. progress) [resizeFactor 1] `styleBasic` [textSize 24],
+      label_ (T.pack . genProgressString 1 $  model ^. chordSetProgress) [resizeFactor 1] `styleBasic` [textSize 24],
+      label_ (T.pack . genProgressString 6 $  model ^. clockProgress) [resizeFactor 1] `styleBasic` [textSize 24],
       selectList inDev (fst devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
       selectList outDev (snd devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
       button "Play/Stop" AppStartStop
     ] `styleBasic` [padding 10]
 
-genProgressString :: Int -> String
-genProgressString x
-  | x >= 0 = concat . flip replicate "o" $ x `div` 6
+genProgressString :: Int -> Int -> String
+genProgressString divNum x
+  | x >= 0 = concat . flip replicate "o" $ x `div` divNum
   | otherwise = ""
 
 handleEvent
@@ -92,9 +96,7 @@ handleEvent mUiInput uiOutput wenv node model evt =
     disposeTask = return AppDisposeDone
     exitTask = putMVar mUiInput UiExit >> return AppExitDone
   in case evt of
-    AppInit -> [ Producer $ chordUpdateProducer $ tChordName uiOutput
-               , Producer $ progressProducer $ tProgress uiOutput
-               ]
+    AppInit -> [Producer $ outputUpdateProducer uiOutput]
     AppStartStop -> case model ^. playing of
                       Playing -> [ Task stopTask
                                  , Model $ model & playing .~ PlayStopping
@@ -108,28 +110,26 @@ handleEvent mUiInput uiOutput wenv node model evt =
     AppExit -> [Task exitTask]
     AppExitDone -> []
     AppUpdateChord name -> [Model $ model & chordName .~ name]
-    AppUpdateProgress x -> [Model $ model & progress .~ x]
+    AppUpdateClockProgress x -> [Model $ model & clockProgress .~ x]
+    AppUpdateChordSetProgress x -> [Model $ model & chordSetProgress .~ x]
 
-chordUpdateProducer :: TVar String
-                    -> (AppEvent -> IO ()) -> IO ()
-chordUpdateProducer tChordName sendMsg = do
-    name <- readTVarIO tChordName
-    sendMsg $ AppUpdateChord name 
-    threadDelay 10000
-    chordUpdateProducer tChordName sendMsg
-
-progressProducer :: TVar Int
-                    -> (AppEvent -> IO ()) -> IO ()
-progressProducer tProgress sendMsg = do
-  readTVarIO tProgress
-    >>= sendMsg . AppUpdateProgress
+outputUpdateProducer :: UiOutput -> (AppEvent -> IO ()) -> IO ()
+outputUpdateProducer uiOutput sendMsg = do
+  let
+    f event elm = (event <$> (readTVarIO $ elm uiOutput))
+                  >>= sendMsg
+  f AppUpdateChord tChordName
+  f AppUpdateClockProgress tClockProgress
+  f AppUpdateChordSetProgress tChordSetProgress
   threadDelay 10000
-  progressProducer tProgress sendMsg
+  outputUpdateProducer uiOutput sendMsg
 
 uiMain :: MVar UiInput -> UiOutput -> DeviceLists -> IO ()
 uiMain mUiInput uiOutput devices = do
-  startApp model (handleEvent mUiInput uiOutput) (buildUI devices) config
+  startApp model h b config
   where
+    h = handleEvent mUiInput uiOutput :: AppEventHandler AppModel AppEvent
+    b = buildUI devices :: AppUIBuilder AppModel AppEvent
     config = [
       appWindowTitle "KANNASHI chordMapper",
       appTheme darkTheme,
@@ -138,20 +138,23 @@ uiMain mUiInput uiOutput devices = do
       appDisposeEvent AppDispose,
       appExitEvent AppExit
       ]
-    model = AppModel "" PlayStopped 0 (unsafeInputID 0, "") (unsafeOutputID 0, "")
+    model = AppModel "" PlayStopped 0 0 (unsafeInputID 0, "") (unsafeOutputID 0, "") :: AppModel
 
 
 createUiThread :: DeviceLists -> IO (IO UiInput, UiUpdator)
 createUiThread devices = do 
   mUiInput <- newEmptyMVar
   tChordName <- newTVarIO ""
-  tUiProgress <- newTVarIO 0
-  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress) devices
+  tClockProgress <- newTVarIO 0
+  tChordSetProgress <- newTVarIO 0
+  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tClockProgress tChordSetProgress) devices
 
   let
     uiInput = takeMVar mUiInput
     updateTVar tx = maybe (return ()) (atomically . writeTVar tx)
-    updator (mChordName, mProgress) =  updateTVar tChordName mChordName
-                                    >> updateTVar tUiProgress mProgress
+    updator (mbChordName, mbClockProgress, mbChordSetProgress)
+      =  updateTVar tChordName mbChordName
+      >> updateTVar tClockProgress mbClockProgress
+      >> updateTVar tChordSetProgress mbChordSetProgress
 
   return (uiInput, updator)

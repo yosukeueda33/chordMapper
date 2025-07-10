@@ -229,7 +229,7 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator =
     start = sendSingleMessage 0xFA -- realtime-clock start 
     stop = do 
       sendSingleMessage 0xFC -- realtime-clock stop
-      uiUpdator (Just "", Just 0)
+      uiUpdator (Just "", Just 0, Just 0)
       putStrLn "closed clock"
 
     waitSingleTick sig = do
@@ -245,10 +245,10 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator =
         -- Set chord map.
         let (duration, name, m) = cMap
         atomically $ writeTVar tChordMap m
-        uiUpdator (Just name, Nothing)
+        uiUpdator (Just name, Nothing, Nothing)
         -- Ticking while chord duration.
         mapM_ ( (>> waitSingleTick preStopSig)
-              . uiUpdator . \x -> (Nothing, Just x)) $ reverse [0 .. (duration - 1)]
+              . uiUpdator . \x -> (Nothing, Just x, Nothing)) $ reverse [0 .. (duration - 1)]
 
     loop = do
       -- Stop control.
@@ -256,7 +256,8 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator =
       when (not stopNow) $ do
         -- Play one chord map set.
         cMaps <- readTVarIO tChordMapSet
-        mapM_ playChordMap cMaps
+        mapM_ (\(cm, p) -> uiUpdator (Nothing, Nothing, Just p) >> playChordMap cm)
+          . zip cMaps $ reverse [0..((length cMaps) - 1)]
         loop
 
   in do
