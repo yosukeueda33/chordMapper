@@ -119,23 +119,22 @@ main = do
   hFlush stdout
 
   --Start/Stop loop.
-  mUiInput <- newEmptyMVar
   loopExitSig <- newEmptyMVar
   loopExitDoneSig <- newMVar ()
-  tChordName <- newTVarIO ""
-  tUiProgress <- newTVarIO 0
   devices <- let f = map $ bimap id name
              in bimap f f <$> getAllDevices 
-  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress) devices
+  -- UI thread.
+  (uiInput, uiUpdator) <- createUiThread devices
   initializeMidi
   let
     loop :: IO ()
     loop = do
-      i <- takeMVar mUiInput :: IO UiInput
+      i <- uiInput
       case i of
         (UiStart inDev outDev) -> do
           _ <- tryTakeMVar loopExitDoneSig
-          _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig tChordName tUiProgress config inDev outDev
+          _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig
+                        uiUpdator config inDev outDev
           putStrLn "Loop Started."
           loop
         UiStop -> do
@@ -152,9 +151,9 @@ main = do
   loop
   terminateMidi
 
-mainLoop :: MVar () -> MVar () -> TVar String -> TVar Int -> FullConfig
+mainLoop :: MVar () -> MVar () -> UiUpdator -> FullConfig
             -> InputDeviceID -> OutputDeviceID -> IO ()
-mainLoop exitSig exitDoneSig tChordName tUiProgress config inDev outDev = do
+mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     tPushingKeys <- newTVarIO Map.empty
@@ -171,7 +170,7 @@ mainLoop exitSig exitDoneSig tChordName tUiProgress config inDev outDev = do
       op = do
         putStrLn ("Initializing MIDI Devices...")
         _ <- forkIO (clockLoop qnSec tChordMapSet tChordMap
-                      genBuf preStopSig tChordName tUiProgress)
+                      genBuf preStopSig uiUpdator)
         _ <- forkIO $ midiInRec inDev inBuf
                       (specialInput tControl $ specialInputs config)
                       tPushingKeys tChordMap stopSig -- poll input and add to buffer
@@ -222,17 +221,15 @@ changeChordMapSet tChordMapSet tChordMapSetIndex cMapSL = atomically $ do
   writeTVar tChordMapSetIndex nextI
 
 clockLoop :: Double -> TVar [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
-          -> TVar Bool -> TVar String -> TVar Int -> IO ()
-clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordName tUiProgress =
+          -> TVar Bool -> UiUpdator -> IO ()
+clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator =
   let
     sendSingleMessage x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
     start = sendSingleMessage 0xFA -- realtime-clock start 
     stop = do 
       sendSingleMessage 0xFC -- realtime-clock stop
-      atomically $ do
-        writeTVar tChordName ""
-        writeTVar tUiProgress 0
+      uiUpdator (Just "", Just 0)
       putStrLn "closed clock"
 
     waitSingleTick sig = do
@@ -247,12 +244,11 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordName tUiProgress 
       when (not stopNow) $ do
         -- Set chord map.
         let (duration, name, m) = cMap
-        atomically $ do
-          writeTVar tChordMap m
-          writeTVar tChordName name
+        atomically $ writeTVar tChordMap m
+        uiUpdator (Just name, Nothing)
         -- Ticking while chord duration.
         mapM_ ( (>> waitSingleTick preStopSig)
-              . atomically . writeTVar tUiProgress ) $ reverse [0 .. (duration - 1)]
+              . uiUpdator . \x -> (Nothing, Just x)) $ reverse [0 .. (duration - 1)]
 
     loop = do
       -- Stop control.

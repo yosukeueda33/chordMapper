@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Ui (uiMain, UiInput(..), UiOutput(..)) where
+module Ui (uiMain, UiInput(..), UiUpdator, createUiThread) where
 
 import Control.Lens
 import qualified Data.Text as T
@@ -9,7 +9,7 @@ import Monomer
 
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, threadDelay)
 
 import qualified Monomer.Lens as L
 import Euterpea.IO.MIDI.MidiIO
@@ -32,6 +32,8 @@ data UiOutput = UiOutput {
   tChordName :: TVar String,
   tProgress :: TVar Int
 }
+
+type UiUpdator = (Maybe String, Maybe Int) -> IO ()
 
 data AppEvent
   = AppInit
@@ -137,3 +139,19 @@ uiMain mUiInput uiOutput devices = do
       appExitEvent AppExit
       ]
     model = AppModel "" PlayStopped 0 (unsafeInputID 0, "") (unsafeOutputID 0, "")
+
+
+createUiThread :: DeviceLists -> IO (IO UiInput, UiUpdator)
+createUiThread devices = do 
+  mUiInput <- newEmptyMVar
+  tChordName <- newTVarIO ""
+  tUiProgress <- newTVarIO 0
+  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tUiProgress) devices
+
+  let
+    uiInput = takeMVar mUiInput
+    updateTVar tx = maybe (return ()) (atomically . writeTVar tx)
+    updator (mChordName, mProgress) =  updateTVar tChordName mChordName
+                                    >> updateTVar tUiProgress mProgress
+
+  return (uiInput, updator)
