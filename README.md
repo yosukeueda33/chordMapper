@@ -101,7 +101,7 @@ And in each chord time duration, every keys separated by area that one area has 
 ![Alt text](imgs/chords_mapped_on_keys.png)
 
 ## Configuration
-Default confuguration is written on config/config.dhall.  
+Default confuguration is written on config/default.dhall.  
 Dhall is configuration file extension that is not widely used. I chose it because it has many strong syntax than other file type.
 
 You can pass path of your config to chordMapper like this.

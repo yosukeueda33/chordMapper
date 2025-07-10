@@ -101,7 +101,7 @@ main = do
       parse :: [String] -> IO String
       parse ["-h"] = usage >> exit
       parse ["-v"] = version >> exit
-      parse [] = return "./config/config.dhall"
+      parse [] = return "./config/default.dhall"
       parse xs = maybe (usage >> exit) return $ listToMaybe xs 
       version = putStrLn "chordMapper version 0.0"
       usage = putStrLn "Usage: chordMapper [-vh] [config dhall file path]"
