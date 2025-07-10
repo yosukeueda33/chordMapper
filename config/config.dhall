@@ -17,17 +17,19 @@ let getDegChord = \(key : Text) -> \(scale : Text) -> \(deg : Natural) ->
 let getAbsChord = \(r : Text) -> \(typ : Text) ->
       ChordMapConfig.Abs {chordRoot = r, chordType = typ}
 
-let root = "C"
-let scale = "Major"
-
 in
 { oneQnSec = 0.6
 , chordMapSetList = [
       {chordMapSet = [
-        {durationCnf = 24*4, chordCnf = getDegChord root scale 2}
-      , {durationCnf = 24*4, chordCnf = getDegChord root scale 5}
-      , {durationCnf = 24*4, chordCnf = getDegChord root scale 1}
-      , {durationCnf = 24*4, chordCnf = getDegChord root scale 6}
+        {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 2}
+      , {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 5}
+      , {durationCnf = 24*8, chordCnf = getDegChord "A" "Minor" 1}
+      ]}
+  ,   {chordMapSet = [
+        {durationCnf = 24*4, chordCnf = getDegChord "F" "Mixolydian" 4}
+      , {durationCnf = 24*4, chordCnf = getDegChord "F" "Mixolydian" 1}
+      , {durationCnf = 24*4, chordCnf = getDegChord "F" "Mixolydian" 5}
+      , {durationCnf = 24*4, chordCnf = getDegChord "F" "Mixolydian" 6}
       ]}
   ,   {chordMapSet = [ -- Tasogare Surround
         {durationCnf = 24*4, chordCnf = getAbsChord "E" "Major7th"}

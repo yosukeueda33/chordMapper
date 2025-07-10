@@ -28,7 +28,7 @@ import qualified Data.Text as T
 import Data.Bifunctor
 import Data.Maybe
 import Monomer
-import Dhall
+import Dhall hiding (maybe)
 
 import Chord (ChordType(..), Chord(..), Tension(..), chordTones
              , chordTonesTensionAsPassing
@@ -95,12 +95,28 @@ instance Dhall.Interpret SpecialInput
 instance Dhall.Interpret FullConfig
 
 main = do
+  -- Read command line arg.
+  fname <- 
+    let
+      parse :: [String] -> IO String
+      parse ["-h"] = usage >> exit
+      parse ["-v"] = version >> exit
+      parse [] = return "./config/config.dhall"
+      parse xs = maybe (usage >> exit) return $ listToMaybe xs 
+      version = putStrLn "chordMapper version 0.0"
+      usage = putStrLn "Usage: chordMapper [-vh] [config dhall file path]"
+      exit = exitWith ExitSuccess
+    in
+      T.pack <$> (getArgs >>= parse) :: IO Text
+
+  -- Load config.
+  config <- Dhall.input Dhall.auto fname :: IO FullConfig
+  print config
+
+  -- Initialize buffers.
   hSetBuffering stdout NoBuffering
   hSetBuffering stdin NoBuffering
   hFlush stdout
-
-  config <- Dhall.input Dhall.auto "./config/config.dhall" :: IO FullConfig
-  print config
 
   --Start/Stop loop.
   mUiInput <- newEmptyMVar
