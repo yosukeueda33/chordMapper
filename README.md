@@ -167,7 +167,8 @@ specialInputs = [
 
 - [x] Switch between multiple chord map.
 - [ ] Record pattern.
-- [ ] Multi-channel.
 - [ ] Collision note merging.
 - [x] Absolute Chord.
 - [ ] Modify UI.
+- [ ] Wider MIDI key (now only 25-key device works)
+- [ ] Octave change
