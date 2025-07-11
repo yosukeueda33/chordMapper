@@ -18,7 +18,8 @@ let getAbsChord = \(r : Text) -> \(typ : Text) ->
       ChordMapConfig.Abs {chordRoot = r, chordType = typ}
 
 in
-{ oneQnSec = 0.6
+{ oneQnSec = 0.6 : Double
+, clockOffset = 5 : Natural
 , chordMapSetList = [
       {chordMapSet = [
         {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 2}

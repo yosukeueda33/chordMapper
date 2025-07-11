@@ -27,6 +27,7 @@ import Control.Concurrent.MVar
 import qualified Data.Text as T
 import Data.Bifunctor
 import Data.Maybe
+import Control.Monad.State
 import Monomer
 import Dhall hiding (maybe)
 
@@ -83,6 +84,7 @@ data SpecialInput = SpecialInput
 
 data FullConfig = FullConfig
   { oneQnSec        :: Double
+  , clockOffset     :: Natural
   , chordMapSetList    :: [ChordMapSet]
   , specialInputs   :: [SpecialInput]
   } deriving (Show, Generic)
@@ -170,7 +172,7 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
       op = do
         putStrLn ("Initializing MIDI Devices...")
         _ <- forkIO (clockLoop qnSec tChordMapSet tChordMap
-                      genBuf preStopSig uiUpdator)
+                      genBuf preStopSig uiUpdator (fromIntegral $ clockOffset config))
         _ <- forkIO $ midiInRec inDev inBuf
                       (specialInput tControl $ specialInputs config)
                       tPushingKeys tChordMap stopSig -- poll input and add to buffer
@@ -221,51 +223,60 @@ changeChordMapSet tChordMapSet tChordMapSetIndex cMapSL = atomically $ do
   writeTVar tChordMapSetIndex nextI
 
 clockLoop :: Double -> TVar [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
-          -> TVar Bool -> UiUpdator -> IO ()
-clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator =
+          -> TVar Bool -> UiUpdator -> Int -> IO ()
+clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator
+          clockDelayStepNum =
   let
     sendSingleMessage x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
-    start = sendSingleMessage 0xFA -- realtime-clock start 
-    stop = do 
-      sendSingleMessage 0xFC -- realtime-clock stop
-      uiUpdator (Just "", Just 0, Just 0)
-      putStrLn "closed clock"
+    sendStart = sendSingleMessage 0xFA -- realtime-clock start 
+    sendClock = sendSingleMessage 0xF8 -- realtime-clock tick
+    sendStop  = sendSingleMessage 0xFC -- realtime-clock stop
 
-    waitSingleTick sig = do
-      stopNow <- readTVarIO sig
+    sendDelayedClock :: StateT Int IO ()
+    sendDelayedClock = do
+      nowCount <- get
+      if nowCount < clockDelayStepNum then modify (+1)
+      else if nowCount == clockDelayStepNum then (liftIO sendStart) >> modify (+1)
+      else (liftIO sendClock)
+
+    waitSingleTick :: StateT Int IO ()
+    waitSingleTick = do
+      stopNow <- liftIO $ readTVarIO preStopSig
       when (not stopNow) $ do
-        wait $ qnSec / 24.0
-        sendSingleMessage 0xF8 -- realtime-clock tick
+        liftIO $ wait $ qnSec / 24.0
+        sendDelayedClock
       
+    playChordMap :: ChordMap -> StateT Int IO ()
     playChordMap cMap = do
       -- Stop control.
-      stopNow <- readTVarIO preStopSig
+      stopNow <- liftIO $ readTVarIO preStopSig
       when (not stopNow) $ do
         -- Set chord map.
         let (duration, name, m) = cMap
-        atomically $ writeTVar tChordMap m
-        uiUpdator (Just name, Nothing, Nothing)
+        liftIO $ atomically $ writeTVar tChordMap m
+        liftIO $ uiUpdator (Just name, Nothing, Nothing)
         -- Ticking while chord duration.
         forM_ (reverse [0 .. (duration - 1)])
-          $ \x -> uiUpdator (Nothing, Just x, Nothing)
-                  >> waitSingleTick preStopSig
+          $ \x -> liftIO (uiUpdator (Nothing, Just x, Nothing))
+                  >> waitSingleTick
 
+    loop :: StateT Int IO ()
     loop = do
       -- Stop control.
-      stopNow <- readTVarIO preStopSig
+      stopNow <- liftIO $ readTVarIO preStopSig
       when (not stopNow) $ do
         -- Play one chord map set.
-        cMaps <- readTVarIO tChordMapSet
+        cMaps <- liftIO $ readTVarIO tChordMapSet
         forM_ (zip cMaps $ reverse [0..((length cMaps) - 1)])
-          $ \(cm, p) -> uiUpdator (Nothing, Nothing, Just p)
+          $ \(cm, p) -> (liftIO $ uiUpdator (Nothing, Nothing, Just p))
                         >> playChordMap cm
         loop
-
   in do
-    start
-    loop
-    stop
+    execStateT loop 0
+    sendStop
+    uiUpdator (Just "", Just 0, Just 0)
+    putStrLn "closed clock"
 
 type ChordMap = (Int, String, ChordKeyMap)
 

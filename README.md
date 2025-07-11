@@ -116,6 +116,13 @@ One quoter note is for 24 MIDI realtime clock step.
 oneQnSec = 0.6
 ```
 
+## Real time clock start offset from chord change.
+This sets MIDI realtime clock offset number to make chord change timing earlier than drums.
+This makes chord change easier when you rushing than drums.
+```dhall
+clockOffset = 5
+```
+
 ### Chord progression
 You can write `direct chord style` with `getAbsChord` function.
 You can also write `scale-degree style` with `getDegChord` function.
