@@ -41,5 +41,8 @@ in
   ]
 , specialInputs = [
     {controlType = "NextChordMapSet", messageType="NoteOn", channelNum=9, keyNum=39}
+  , {controlType = "RecStart", messageType="NoteOn", channelNum=9, keyNum=42}
+  , {controlType = "RecPlayResume", messageType="NoteOn", channelNum=9, keyNum=41}
+  , {controlType = "RecPlayStop", messageType="NoteOn", channelNum=9, keyNum=40}
   ]
 }

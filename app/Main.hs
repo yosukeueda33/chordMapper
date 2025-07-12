@@ -73,7 +73,9 @@ data ChordMapSet = ChordMapSet
     chordMapSet :: [ChordMapEntry]
   } deriving (Show, Generic)
 
-data ControlType = NextChordMapSet | RecOnNextChordSeq deriving (Show, Read, Eq)
+data ControlType = NextChordMapSet
+                 | RecStart | RecPlayResume | RecPlayStop
+                 deriving (Show, Read, Eq)
 
 data SpecialInput = SpecialInput
   { controlType :: Text
@@ -176,11 +178,18 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
         _ <- forkIO $ midiInRec inDev inBuf
                       (specialInput tControl $ specialInputs config)
                       tPushingKeys tChordMap stopSig -- poll input and add to buffer
-        _ <- forkIO $ genControlProcess stopSig tControl
+        _ <- forkIO $ genControlProcess stopSig tControl -- For Special Input
                         [ ( NextChordMapSet
-                          ,  putStrLn "chord map change!" >> changeChordMapSet
-                              tChordMapSet tChordMapSetIndex
-                              (chordMapSetList config))
+                          ,  putStrLn "Chord map change registered!"
+                              >> changeChordMapSet
+                                  tChordMapSet tChordMapSetIndex
+                                  (chordMapSetList config))
+                        , ( RecStart
+                          ,  putStrLn "Rec Start!")
+                        , ( RecPlayResume
+                          ,  putStrLn "Rec Play Resume!")
+                        , ( RecPlayStop
+                          ,  putStrLn "Rec Play Stop!")
                         ] 
         _ <- forkIO (midiOutRec 0 outDev inBuf genBuf stopSig) -- take from buffer and output
         putStrLn ("MIDI I/O services started.")
