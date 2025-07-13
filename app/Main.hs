@@ -28,6 +28,7 @@ import qualified Data.Text as T
 import Data.Bifunctor
 import Data.Maybe
 import Control.Monad.State
+import Codec.Midi (Channel, Key)
 import Monomer
 import Dhall hiding (maybe)
 
@@ -86,6 +87,7 @@ data SpecialInput = SpecialInput
 
 data FullConfig = FullConfig
   { oneQnSec        :: Double
+  , recStepNum      :: Natural
   , clockOffset     :: Natural
   , chordMapSetList    :: [ChordMapSet]
   , specialInputs   :: [SpecialInput]
@@ -165,6 +167,11 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
     tChordMapSetIndex <- newTVarIO 0
     tChordMap <- newTVarIO (const Nothing)
     tControl <- newTVarIO Nothing
+    tChordStep <- newTVarIO 0
+    tRecPreOn <- newTVarIO False
+    tRecOn <- newTVarIO False
+    tRecData <- newTVarIO []
+    tRecPlayOn <- newTVarIO True
     preStopSig <- newTVarIO False
     stopSig <- newTVarIO False
     putStrLn ("Clearing MIDI Devices...")
@@ -173,11 +180,14 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
       qnSec = oneQnSec config
       op = do
         putStrLn ("Initializing MIDI Devices...")
-        _ <- forkIO (clockLoop qnSec tChordMapSet tChordMap
-                      genBuf preStopSig uiUpdator (fromIntegral $ clockOffset config))
+        _ <- forkIO $ clockLoop qnSec tChordMapSet tChordMap
+                      genBuf preStopSig tChordStep uiUpdator
+                      (fromIntegral $ clockOffset config)
+                      (playRec tRecPlayOn tRecData inBuf tChordMap)
         _ <- forkIO $ midiInRec inDev inBuf
                       (specialInput tControl $ specialInputs config)
-                      tPushingKeys tChordMap stopSig -- poll input and add to buffer
+                      (recordInput (fromIntegral $ recStepNum config) tChordStep tRecPreOn tRecOn tRecPlayOn tRecData)
+                      tPushingKeys tChordMap tChordStep stopSig -- poll input and add to buffer
         _ <- forkIO $ genControlProcess stopSig tControl -- For Special Input
                         [ ( NextChordMapSet
                           ,  putStrLn "Chord map change registered!"
@@ -185,11 +195,16 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
                                   tChordMapSet tChordMapSetIndex
                                   (chordMapSetList config))
                         , ( RecStart
-                          ,  putStrLn "Rec Start!")
+                          ,  putStrLn "Rec Start!"
+                             >> (atomically $ do
+                                  writeTVar tRecPreOn True
+                                  writeTVar tRecOn False))
                         , ( RecPlayResume
-                          ,  putStrLn "Rec Play Resume!")
+                          ,  putStrLn "Rec Play Resume!"
+                             >> (atomically $ writeTVar tRecPlayOn True))
                         , ( RecPlayStop
-                          ,  putStrLn "Rec Play Stop!")
+                          ,  putStrLn "Rec Play Stop!"
+                             >> (atomically $ writeTVar tRecPlayOn False))
                         ] 
         _ <- forkIO (midiOutRec 0 outDev inBuf genBuf stopSig) -- take from buffer and output
         putStrLn ("MIDI I/O services started.")
@@ -208,6 +223,22 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
     takeMVar exitSig
     putStrLn "Got exit"
     closeOp
+
+playRec :: TVar Bool -> TVar [(Int, Message)]
+        -> TVar [(Time, MidiMessage)] -> TVar ChordKeyMap -> Int -> IO()
+playRec tRecPlayOn tRecData inBuf tChordMap step = do
+  on <- readTVarIO tRecPlayOn
+  when on $ do
+    datAll <- readTVarIO tRecData
+    cm <- readTVarIO tChordMap
+    let
+      datStep = map snd $ filter ((==) step . fst) datAll :: [Message]
+      applyChordMap' :: Message -> Message
+      applyChordMap' (NoteOn chan key vol) = NoteOn chan (head . fromJust $  cm key) vol
+      applyChordMap' (NoteOff chan key vol) = NoteOff chan (head . fromJust $ cm key) vol
+
+    when (not $ null datAll) . atomically . addMsgs inBuf $ map ((\x -> (0.0, x)) . Std . applyChordMap') datStep
+
     
 genControlProcess :: TVar Bool -> TVar (Maybe ControlType)
                   -> [(ControlType, IO ())] -> IO ()
@@ -232,9 +263,9 @@ changeChordMapSet tChordMapSet tChordMapSetIndex cMapSL = atomically $ do
   writeTVar tChordMapSetIndex nextI
 
 clockLoop :: Double -> TVar [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
-          -> TVar Bool -> UiUpdator -> Int -> IO ()
-clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator
-          clockDelayStepNum =
+          -> TVar Bool -> TVar Int -> UiUpdator -> Int -> (Int -> IO ()) -> IO ()
+clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
+          clockDelayStepNum playRecF =
   let
     sendSingleMessage x = atomically
         $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
@@ -266,8 +297,14 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig uiUpdator
         liftIO $ atomically $ writeTVar tChordMap m
         liftIO $ uiUpdator (Just name, Nothing, Nothing)
         -- Ticking while chord duration.
-        forM_ (reverse [0 .. (duration - 1)])
-          $ \x -> liftIO (uiUpdator (Nothing, Just x, Nothing))
+        forM_ [0 .. (duration - 1)]
+          $ \x -> liftIO (  uiUpdator ( Nothing
+                                      , Just ((duration- 1) - x)
+                                      , Nothing
+                                      )
+                         >> atomically (writeTVar tChordStep x)
+                         >> playRecF x
+                         )
                   >> waitSingleTick
 
     loop :: StateT Int IO ()
@@ -388,6 +425,51 @@ printPushingKeysLoop pushingKeys stopSignal = do
       print keys
       printPushingKeysLoop pushingKeys stopSignal
 
+
+type MsgNoVol = (Channel, Key)
+-- Start side wrapping is adhoc. It should be read from Pushing list. 
+wrapUpRecData :: Int -> [(Int, Message)] -> [(Int, Message)]
+wrapUpRecData wrapLen xs = h ++ xs ++ t
+  where
+    onVol = 100
+    offVol = 0
+    h = map (\(ch, key) -> (0, NoteOn ch key onVol)) unsolvedOff
+    t = map (\(ch, key) -> (wrapLen-1, NoteOff ch key offVol)) unsolvedOn
+    offSide = fst
+    onSide = snd
+    unsolvedOff = offSide r
+    unsolvedOn = onSide r
+
+    r :: ([MsgNoVol], [MsgNoVol]) -- (Off list, On list)
+    r = foldl f ([], []) $ map snd xs
+
+    f :: ([MsgNoVol], [MsgNoVol]) -> Message -> ([MsgNoVol], [MsgNoVol])
+    f acc (NoteOn ch key _) = (offSide acc, onSide acc ++ [(ch, key)]) 
+    f acc (NoteOff ch key _) = if ((ch, key) `elem` onSide acc)
+                                 then (offSide acc, delete (ch, key) $ onSide acc)
+                                 else (offSide acc ++ [(ch, key)], onSide acc)
+    f acc _ = acc
+
+recordInput :: Int -> TVar Int -> TVar Bool -> TVar Bool -> TVar Bool
+            -> TVar [(Int, Message)]-> [Message] -> IO ()
+recordInput lim tChordStep tRecPreOn tRecOn tRecPlayOn tRecData msgs = atomically $ do
+    preOn <- readTVar tRecPreOn
+    step <- readTVar tChordStep
+    when (preOn && (step == 0)) $ do
+      writeTVar tRecOn True
+      writeTVar tRecData []
+      writeTVar tRecPreOn False
+      writeTVar tRecPlayOn False
+    on <- readTVar tRecOn
+    when on $ do
+      xs <- readTVar tRecData
+      let xs' = xs ++ map (\m -> (step, m)) msgs
+      if (step < (lim - 1)) then writeTVar tRecData xs'
+      else do
+        writeTVar tRecOn False
+        writeTVar tRecData $ wrapUpRecData lim xs'
+        writeTVar tRecPlayOn True
+
 specialInput :: TVar (Maybe ControlType) -> [SpecialInput] -> Message -> IO ()
 specialInput tControl cfgs msg =
   let
@@ -414,15 +496,18 @@ specialInput tControl cfgs msg =
   in mapM_ f cfgs
 
 midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)]
-          -> (Message -> IO ()) -> TVar PushingKeyMap
-          -> TVar ChordKeyMap -> TVar Bool -> IO ()
-midiInRec inDev inBuf spInputF tPushingKeys tChordMap stopSignal = do
+          -> (Message -> IO ()) -> ([Message] -> IO ()) -> TVar PushingKeyMap
+          -> TVar ChordKeyMap -> TVar Int -> TVar Bool -> IO ()
+midiInRec inDev inBuf spInputF addRecF
+          tPushingKeys tChordMap tChordStep stopSignal = do
     wait 0.01 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
     stopNow <- readTVarIO stopSignal
     if stopNow then return () else do
         msgs <- mapM getMidiInput [inDev] :: IO [Maybe (Time, [Message])]
         -- Special input like sending next chord map...
-        mapM_ spInputF . concat . map snd $ catMaybes msgs
+        let jMsgs = concat . map snd $ catMaybes msgs
+        mapM_ spInputF jMsgs
+        addRecF jMsgs
         -- Normal Input.
         atomically $ do
           chordMap <- readTVar tChordMap
@@ -434,9 +519,9 @@ midiInRec inDev inBuf spInputF tPushingKeys tChordMap stopSignal = do
                             = map (\m -> (0, Std m))
                             $ ms >>= applyChordMap chordMap pushingKeys
           updatePushingKeys tChordMap tPushingKeys msgs
-          if null outVal then return () else addMsgs inBuf outVal
-          -- if null outVal then return () else lift $ print ("User input: "++show outVal)
-        midiInRec inDev inBuf spInputF tPushingKeys tChordMap stopSignal
+          when (not $ null outVal) $ addMsgs inBuf outVal
+        midiInRec inDev inBuf spInputF addRecF
+                  tPushingKeys tChordMap tChordStep stopSignal
 
 applyChordMap :: ChordKeyMap -> PushingKeyMap -> Message -> [Message]
 applyChordMap chordKeyMap _ (NoteOn ch key vel) = do
