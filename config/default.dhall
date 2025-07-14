@@ -20,7 +20,7 @@ let getAbsChord = \(r : Text) -> \(typ : Text) ->
 in
 { oneQnSec = 0.6 : Double
 , clockOffset = 5 : Natural
-, recStepNum = 24*4: Natural
+, recStepNum = 24*4: Natural -- Shouldn't be changed. It's still buggy.
 , chordMapSetList = [
       {chordMapSet = [
         {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 2}

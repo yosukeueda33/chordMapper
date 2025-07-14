@@ -233,11 +233,13 @@ playRec tRecPlayOn tRecData inBuf tChordMap step = do
     cm <- readTVarIO tChordMap
     let
       datStep = map snd $ filter ((==) step . fst) datAll :: [Message]
-      applyChordMap' :: Message -> Message
-      applyChordMap' (NoteOn chan key vol) = NoteOn chan (head . fromJust $  cm key) vol
-      applyChordMap' (NoteOff chan key vol) = NoteOff chan (head . fromJust $ cm key) vol
+      applyChordMap' :: Message -> Maybe Message
+      applyChordMap' (NoteOn chan key vol) = (\x -> NoteOn chan x vol) . head <$> cm key
+      applyChordMap' (NoteOff chan key vol) = (\x -> NoteOff chan x vol) . head <$> cm key
 
-    when (not $ null datAll) . atomically . addMsgs inBuf $ map ((\x -> (0.0, x)) . Std . applyChordMap') datStep
+    when (not $ null datAll)
+      . atomically . addMsgs inBuf
+      $ mapMaybe (fmap (\x -> (0.0, Std x)) . applyChordMap') datStep
 
     
 genControlProcess :: TVar Bool -> TVar (Maybe ControlType)
