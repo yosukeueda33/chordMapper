@@ -25,7 +25,8 @@ in
       {chordMapSet = [
         {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 2}
       , {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 5}
-      , {durationCnf = 24*8, chordCnf = getDegChord "A" "Minor" 1}
+      , {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 1}
+      , {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 6}
       ]}
   ,   {chordMapSet = [
         {durationCnf = 24*4, chordCnf = getDegChord "F" "Mixolydian" 4}
