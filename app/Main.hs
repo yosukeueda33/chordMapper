@@ -27,6 +27,7 @@ import Control.Concurrent.MVar
 import qualified Data.Text as T
 import Data.Bifunctor
 import Data.Maybe
+import Data.Map (toList)
 import Control.Monad.State
 import Codec.Midi (Channel, Key)
 import Monomer
@@ -525,16 +526,23 @@ midiInRec inDev inBuf spInputF addRecF
         midiInRec inDev inBuf spInputF addRecF
                   tPushingKeys tChordMap tChordStep stopSignal
 
+imply :: Bool -> Bool -> Bool
+imply x y = (not x) || y
+
 applyChordMap :: ChordKeyMap -> PushingKeyMap -> Message -> [Message]
 applyChordMap chordKeyMap _ (NoteOn ch key vel) = do
   k <- case chordKeyMap key of
         Just ks -> ks
         Nothing -> return key
   return $ NoteOn ch k vel
-applyChordMap _ pushingKeyMap (NoteOff ch key vel) = do
+applyChordMap chordKeyMap pushingKeyMap (NoteOff ch key vel) = do
   k <- case Map.lookup key pushingKeyMap of
         Just ks -> ks
         Nothing -> return key
+  -- Cancel OFF except last one when there multiple ON.
+  let pushingCount
+        = (length . filter ((==) k). concat . map snd $ toList pushingKeyMap)
+  guard $ (isJust $ chordKeyMap key) `imply` (pushingCount == 1)
   return $ NoteOff ch k vel
 applyChordMap _ _ m = return m
 

@@ -23,10 +23,8 @@ in
 , recStepNum = 24*4: Natural -- Shouldn't be changed. It's still buggy.
 , chordMapSetList = [
       {chordMapSet = [
-        {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 2}
-      , {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 5}
-      , {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 1}
-      , {durationCnf = 24*4, chordCnf = getDegChord "A" "Minor" 6}
+        {durationCnf = 24*4, chordCnf = getDegChord "C" "Major" 1}
+      , {durationCnf = 24*4, chordCnf = getDegChord "C" "Major" 3}
       ]}
   ,   {chordMapSet = [
         {durationCnf = 24*4, chordCnf = getDegChord "F" "Mixolydian" 4}
