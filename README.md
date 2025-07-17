@@ -106,8 +106,10 @@ Dhall is configuration file extension that is not widely used. I chose it becaus
 
 You can pass path of your config to chordMapper like this.
 ```shell
-stack run -- your_config.dhall
+stack run -- ./your_config.dhall
 ```
+
+!!!IMPORTANT!!! The file path requires the "./" for relative path from current directory.
 
 ### Quoter note duration 
 This sets one quoter note duration in second. 

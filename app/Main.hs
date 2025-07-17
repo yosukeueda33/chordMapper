@@ -115,6 +115,7 @@ main = do
       exit = exitWith ExitSuccess
     in
       T.pack <$> (getArgs >>= parse) :: IO Text
+  putStrLn $ "config file path:" ++ (T.unpack fname)
 
   -- Load config.
   config <- Dhall.input Dhall.auto fname :: IO FullConfig
