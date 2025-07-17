@@ -239,7 +239,7 @@ playRec tRecPlayOn tRecData inBuf tChordMap step = do
       applyChordMap' (NoteOn chan key vol) = (\x -> NoteOn chan x vol) . head <$> cm key
       applyChordMap' (NoteOff chan key vol) = (\x -> NoteOff chan x vol) . head <$> cm key
 
-    when (not $ null datAll)
+    unless (null datAll)
       . atomically . addMsgs inBuf
       $ mapMaybe (fmap (\x -> (0.0, Std x)) . applyChordMap') datStep
 
@@ -248,7 +248,7 @@ genControlProcess :: TVar Bool -> TVar (Maybe ControlType)
                   -> [(ControlType, IO ())] -> IO ()
 genControlProcess stopSig tControl cps = do
   stopNow <- atomically $ readTVar stopSig
-  when (not stopNow) $ do
+  unless stopNow $ do
     mbTc <- readTVarIO tControl
     case mbTc of
       Nothing -> return ()
@@ -288,7 +288,7 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
     waitSingleTick :: StateT Int IO ()
     waitSingleTick = do
       stopNow <- liftIO $ readTVarIO preStopSig
-      when (not stopNow) $ do
+      unless stopNow $ do
         liftIO $ wait $ qnSec / 24.0
         sendDelayedClock
       
@@ -296,7 +296,7 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
     playChordMap cMap = do
       -- Stop control.
       stopNow <- liftIO $ readTVarIO preStopSig
-      when (not stopNow) $ do
+      unless stopNow $ do
         -- Set chord map.
         let (duration, name, m) = cMap
         liftIO $ atomically $ writeTVar tChordMap m
@@ -316,7 +316,7 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
     loop = do
       -- Stop control.
       stopNow <- liftIO $ readTVarIO preStopSig
-      when (not stopNow) $ do
+      unless stopNow $ do
         -- Play one chord map set.
         cMaps <- liftIO $ readTVarIO tChordMapSet
         forM_ (zip cMaps $ reverse [0..((length cMaps) - 1)])
@@ -524,7 +524,7 @@ midiInRec inDev inBuf spInputF addRecF
                             = map (\m -> (0, Std m))
                             $ ms >>= applyChordMap chordMap pushingKeys
           updatePushingKeys tChordMap tPushingKeys msgs
-          when (not $ null outVal) $ addMsgs inBuf outVal
+          unless (null outVal) $ addMsgs inBuf outVal
         midiInRec inDev inBuf spInputF addRecF
                   tPushingKeys tChordMap tChordStep stopSignal
 
