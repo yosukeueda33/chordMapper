@@ -272,7 +272,8 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
           clockDelayStepNum playRecF =
   let
     sendSingleMessage x = atomically
-        $ writeTVar genBuf [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
+                        $ addMsgs genBuf
+                            [(0.0, Std $ Reserved 0 $ BL.singleton x)] 
     sendStart = sendSingleMessage 0xFA -- realtime-clock start 
     sendClock = sendSingleMessage 0xF8 -- realtime-clock tick
     sendStop  = sendSingleMessage 0xFC -- realtime-clock stop
