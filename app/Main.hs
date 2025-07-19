@@ -7,7 +7,6 @@ import Euterpea
 import Euterpea.IO.MIDI.MidiIO
 import System.Exit
 import System.IO
-import Control.Exception
 import Data.List
 import System.Environment
 import Control.Concurrent
@@ -16,28 +15,21 @@ import Data.Time
 import Data.Time.Clock.POSIX
 import Data.Maybe
 import qualified Data.ByteString.Lazy as BL
-import System.Random
-import System.Exit 
-import qualified Data.Set as S (Set, insert, empty, delete, null)
-import Codec.Midi (Key)
 import qualified Data.Map as Map
 import Control.Applicative
 import Control.Monad
-import Control.Concurrent.MVar
 import qualified Data.Text as T
 import Data.Bifunctor
-import Data.Maybe
 import Data.Map (toList)
 import Data.Word (Word8)
 import Control.Monad.State
 import Codec.Midi (Channel, Key)
-import Monomer
 import Dhall hiding (maybe)
 
-import Chord (ChordType(..), Chord(..), Tension(..), chordTones
+import Chord (Chord(..)
              , chordTonesTensionAsPassing
              , getVoicingBetweenOn, getEnvelopeDifference
-             , degreeToChord7thOneTension, degreeToChord7thOnePassingTension
+             , degreeToChord7thOnePassingTension
              , addNoMin2ndTension)
 import Ui
 import Types
