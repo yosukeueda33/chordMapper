@@ -6,6 +6,7 @@ import Control.Monad (guard)
 data IntervalQuality = IPerf | IMajor | IMinor | IAug | IDim deriving (Eq, Show)
 
 data Interval = Interval IntervalQuality Int
+iPerf, iMaj, iMin, iAug, iDim :: Int -> Interval
 iPerf = Interval IPerf
 iMaj = Interval IMajor
 iMin = Interval IMinor
@@ -41,11 +42,3 @@ intervalPitch (Interval q x) = do
             IDim -> if isPerfect then -1 else -2
   mi <- majorInterval x
   return $ mi + diff 
-
-main :: IO ()
-main = do
-  let f interval x = show interval ++ " "
-                   ++ show x ++ ":"
-                   ++ show (intervalPitch $ Interval interval x)
-  mapM_ (\i -> mapM_ (putStrLn . f i) [1..16] >> putStrLn "")
-        [IPerf, IMajor, IMinor, IAug, IDim]

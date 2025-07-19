@@ -4,7 +4,22 @@
 module Main (main) where
 
 import Euterpea
+    ( Mode(..),
+      PitchClass,
+      Message(..),
+      MidiMessage(Std),
+      DeviceInfo(name),
+      OutputDeviceID,
+      InputDeviceID
+    )
 import Euterpea.IO.MIDI.MidiIO
+    ( pollMidi,
+      deliverMidiEvent,
+      outputMidi,
+      Time,
+      terminateMidi,
+      initializeMidi,
+      getAllDevices )
 import System.Exit
 import System.IO
 import Data.List
@@ -95,6 +110,7 @@ instance Dhall.Interpret ChordMapSet
 instance Dhall.Interpret SpecialInput
 instance Dhall.Interpret FullConfig
 
+main :: IO ()
 main = do
   -- Read command line arg.
   fname <- 
@@ -238,8 +254,9 @@ playRec tRecPlayOn tRecData inBuf tChordMap step = do
     let
       datStep = map snd $ filter ((==) step . fst) datAll :: [Message]
       applyChordMap' :: Message -> Maybe Message
-      applyChordMap' (NoteOn chan key vol) = (\x -> NoteOn chan x vol) . head <$> cm key
-      applyChordMap' (NoteOff chan key vol) = (\x -> NoteOff chan x vol) . head <$> cm key
+      applyChordMap' (NoteOn chan kEy vol) = (\x -> NoteOn chan x vol) . head <$> cm kEy
+      applyChordMap' (NoteOff chan kEy vol) = (\x -> NoteOff chan x vol) . head <$> cm kEy
+      applyChordMap' _ = Nothing
 
     unless (null datAll)
       . atomically . addMsgs inBuf
@@ -302,9 +319,9 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
       stopNow <- liftIO $ readTVarIO preStopSig
       unless stopNow $ do
         -- Set chord map.
-        let (duration, name, m) = cMap
+        let (duration, nAme, m) = cMap
         liftIO $ atomically $ writeTVar tChordMap m
-        liftIO $ uiUpdator (Just name, Nothing, Nothing)
+        liftIO $ uiUpdator (Just nAme, Nothing, Nothing)
         -- Ticking while chord duration.
         forM_ [0 .. (duration - 1)]
           $ \x -> liftIO (  uiUpdator ( Nothing
@@ -347,11 +364,11 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
         -- Play one chord map set.
         cMaps <- liftIO $ readTVarIO tChordMapSet
         forM_ (zip cMaps $ reverse [0..((length cMaps) - 1)])
-          $ \(cm, p) -> (liftIO $ uiUpdator (Nothing, Nothing, Just p))
+          $ \(cm, p) -> liftIO ( uiUpdator (Nothing, Nothing, Just p))
                         >> playChordMap cm
         loop
   in do
-    execStateT loop 0
+    _ <- execStateT loop 0
     sendStop
     uiUpdator (Just "", Just 0, Just 0)
     putStrLn "closed clock"
@@ -363,10 +380,10 @@ genChordMap cfgs =
   let
     names = map f cfgs :: [String]
       where
-        f (ChordMapEntry dur (Deg (DegreeChord key scale deg)))
+        f (ChordMapEntry dur (Deg (DegreeChord kEy scale deg)))
           = mconcat [ show dur
                     , " "
-                    , T.unpack key
+                    , T.unpack kEy
                     , " "
                     , T.unpack scale
                     , " "
@@ -377,15 +394,14 @@ genChordMap cfgs =
                     , T.unpack root
                     , " "
                     , T.unpack typ] :: String
-        f cfg = show cfg
 
     chords = map (f . chordCnf) cfgs :: [Chord]
       where
         f :: ChordMapConfig -> Chord
-        f (Deg (DegreeChord key scale deg))
+        f (Deg (DegreeChord kEy scale deg))
             = degreeToChord7thOnePassingTension key' scale' deg'
           where
-            key' = read $ T.unpack key :: PitchClass
+            key' = read $ T.unpack kEy :: PitchClass
             scale' = sToMode $ T.unpack scale :: Mode
             sToMode s = case s of
               "Major" -> Major
@@ -403,7 +419,6 @@ genChordMap cfgs =
           where
             root' = read $ T.unpack root
             typ' = read . ("Ch" ++) $ T.unpack typ
-        f _ = error "config error"
 
     smoothedChords = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
                    $ map (fromJust . chordTonesTensionAsPassing) chords
@@ -431,7 +446,6 @@ getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
           = [head chordTones + (wkey `div` (length chordTones - 1)) * 12 + offset]
     wKeyResult :: Maybe [Key] 
     wKeyResult = wKeyToTones (sort $ tail chordTones) <$> keyToWhiteKeyId inputKey -- The tail for rootless voicing.
-    isRootKey x = True
     wKeyToTones :: [Key] -> Int -> [Key]
     wKeyToTones tones wkey = [(bNum * 12) + (tones !! x) + offset]
       where
@@ -444,19 +458,11 @@ keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -
     (a, b) = divMod k 12
     mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
 
+detectExitLoop :: TVar Bool -> IO ()
 detectExitLoop stopSignal = do
     wait 0.25 -- we only need to check for stopping periodically
     stopNow <- readTVarIO stopSignal
     if stopNow then return () else detectExitLoop stopSignal 
-
-printPushingKeysLoop pushingKeys stopSignal = do 
-    wait 1.0
-    stopNow <- readTVarIO stopSignal
-    if stopNow then return () else do
-      keys <- readTVarIO pushingKeys
-      print keys
-      printPushingKeysLoop pushingKeys stopSignal
-
 
 type MsgNoVol = (Channel, Key)
 -- Start side wrapping is adhoc. It should be read from Pushing list. 
@@ -465,8 +471,8 @@ wrapUpRecData wrapLen xs = h ++ xs ++ t
   where
     onVol = 100
     offVol = 0
-    h = map (\(ch, key) -> (0, NoteOn ch key onVol)) unsolvedOff
-    t = map (\(ch, key) -> (wrapLen-1, NoteOff ch key offVol)) unsolvedOn
+    h = map (\(ch, kEy) -> (0, NoteOn ch kEy onVol)) unsolvedOff
+    t = map (\(ch, kEy) -> (wrapLen-1, NoteOff ch kEy offVol)) unsolvedOn
     offSide = fst
     onSide = snd
     unsolvedOff = offSide r
@@ -476,10 +482,10 @@ wrapUpRecData wrapLen xs = h ++ xs ++ t
     r = foldl f ([], []) $ map snd xs
 
     f :: ([MsgNoVol], [MsgNoVol]) -> Message -> ([MsgNoVol], [MsgNoVol])
-    f acc (NoteOn ch key _) = (offSide acc, onSide acc ++ [(ch, key)]) 
-    f acc (NoteOff ch key _) = if ((ch, key) `elem` onSide acc)
-                                 then (offSide acc, delete (ch, key) $ onSide acc)
-                                 else (offSide acc ++ [(ch, key)], onSide acc)
+    f acc (NoteOn ch kEy _) = (offSide acc, onSide acc ++ [(ch, kEy)]) 
+    f acc (NoteOff ch kEy _) = if ((ch, kEy) `elem` onSide acc)
+                                 then (offSide acc, delete (ch, kEy) $ onSide acc)
+                                 else (offSide acc ++ [(ch, kEy)], onSide acc)
     f acc _ = acc
 
 recordInput :: Int -> TVar Int -> TVar Bool -> TVar Bool -> TVar Bool
@@ -535,7 +541,7 @@ midiInRec inDev inBuf spInputF addRecF
     wait 0.01 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
     stopNow <- readTVarIO stopSignal
     if stopNow then return () else do
-        msgs <- mapM getMidiInput [inDev] :: IO [Maybe (Time, [Message])]
+        msgs <- mapM pollMidi [inDev] :: IO [Maybe (Time, [Message])]
         -- Special input like sending next chord map...
         let jMsgs = concat . map snd $ catMaybes msgs
         mapM_ spInputF jMsgs
@@ -547,7 +553,7 @@ midiInRec inDev inBuf spInputF addRecF
           let outVal = concatMap g msgs :: [(Time, MidiMessage)]
                         where
                           g Nothing = []
-                          g (Just (t,ms))
+                          g (Just (_,ms))
                             = map (\m -> (0, Std m))
                             $ ms >>= applyChordMap chordMap pushingKeys
           updatePushingKeys tChordMap tPushingKeys msgs
@@ -559,19 +565,19 @@ imply :: Bool -> Bool -> Bool
 imply x y = (not x) || y
 
 applyChordMap :: ChordKeyMap -> PushingKeyMap -> Message -> [Message]
-applyChordMap chordKeyMap _ (NoteOn ch key vel) = do
-  k <- case chordKeyMap key of
+applyChordMap chordKeyMap _ (NoteOn ch kEy vel) = do
+  k <- case chordKeyMap kEy of
         Just ks -> ks
-        Nothing -> return key
+        Nothing -> return kEy
   return $ NoteOn ch k vel
-applyChordMap chordKeyMap pushingKeyMap (NoteOff ch key vel) = do
-  k <- case Map.lookup key pushingKeyMap of
+applyChordMap chordKeyMap pushingKeyMap (NoteOff ch kEy vel) = do
+  k <- case Map.lookup kEy pushingKeyMap of
         Just ks -> ks
-        Nothing -> return key
+        Nothing -> return kEy
   -- Cancel OFF except last one when there multiple ON.
   let pushingCount
         = (length . filter ((==) k). concat . map snd $ toList pushingKeyMap)
-  guard $ (isJust $ chordKeyMap key) `imply` (pushingCount == 1)
+  guard $ (isJust $ chordKeyMap kEy) `imply` (pushingCount == 1)
   return $ NoteOff ch k vel
 applyChordMap _ _ m = return m
 
@@ -582,19 +588,19 @@ updatePushingKeys tChordMap tPushingKeys = mapM_ f
     f Nothing = return ()
     f (Just (_, msgs)) = mapM_ ff msgs
     ff :: Message -> STM ()
-    ff (NoteOn _ key _) = do
+    ff (NoteOn _ kEy _) = do
       m <- readTVar tPushingKeys
       chordMap <- readTVar tChordMap
-      let newVal = (\mks -> Map.insert key mks m) <$> chordMap key 
+      let newVal = (\mks -> Map.insert kEy mks m) <$> chordMap kEy 
       mapM_ (writeTVar tPushingKeys) newVal
-    ff (NoteOff _ key _) = do
+    ff (NoteOff _ kEy _) = do
       m <- readTVar tPushingKeys
-      let newVal = Map.delete key m
+      let newVal = Map.delete kEy m
       writeTVar tPushingKeys newVal 
     ff _ = return ()
 
 posixFix :: NominalDiffTime -> Double
-posixFix x = fromIntegral (round(x * 1000)) / 1000
+posixFix x = fromIntegral (round (x * 1000) :: Integer) / 1000
 
 midiOutRec :: Double
            -> OutputDeviceID -> TVar [(Time, MidiMessage)]
@@ -606,7 +612,7 @@ midiOutRec lastMsgTime outDev inBuf genBuf mbOutSubDev genSubBuf stopSig = do
     currT <- getPOSIXTime -- get the current time
     let currT' = posixFix currT
         tEllapsed = currT' - lastMsgTime
-    stopNow <- atomically $ readTVar stopSig
+    stopNow <- readTVarIO stopSig
     unless stopNow $ do
         outVal1 <- atomically $ getClearMsgs inBuf -- fetch user input
         outVal2 <- atomically $ getUpdateMsgs genBuf tEllapsed -- fetch generated music
@@ -621,7 +627,7 @@ midiOutRec lastMsgTime outDev inBuf genBuf mbOutSubDev genSubBuf stopSig = do
         midiOutRec newMsgTime outDev inBuf genBuf mbOutSubDev genSubBuf stopSig
       
 addMsgs :: TVar [a] -> [a] -> STM ()
-addMsgs v [] = return () 
+addMsgs _ [] = return () 
 addMsgs v xs = do
     x <- readTVar v
     let newVal = x ++ xs
@@ -649,11 +655,8 @@ getUpdateMsgs v tElapsed = do
                     return []
 
 sendMidiOut :: OutputDeviceID -> [(Time, MidiMessage)] -> IO ()
-sendMidiOut dev [] = return ()
-sendMidiOut dev ms = outputMidi dev >> (mapM_ (\(t,m) -> deliverMidiEvent dev (0, m))) ms
-
-getMidiInput :: InputDeviceID -> IO (Maybe (Time, [Message])) -- Codec.Midi message format
-getMidiInput dev = pollMidi dev
+sendMidiOut _ [] = return ()
+sendMidiOut dev ms = outputMidi dev >> mapM_ (\(_,m) -> deliverMidiEvent dev (0, m)) ms
 
 type Seconds = Double
 wait :: Seconds -> IO () 

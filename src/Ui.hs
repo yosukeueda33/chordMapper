@@ -11,10 +11,9 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Concurrent (forkIO, threadDelay)
 
-import qualified Monomer.Lens as L
 import Euterpea.IO.MIDI.MidiIO
+    ( OutputDeviceID, InputDeviceID, unsafeInputID, unsafeOutputID )
 
-import Types
 
 data PlayState = PlayStopped | PlayStopping | Playing deriving (Eq, Show)
 
@@ -67,7 +66,7 @@ buildUI
   -> WidgetEnv AppModel AppEvent
   -> AppModel
   -> WidgetNode AppModel AppEvent
-buildUI devices needOutSubDev wenv model = widgetTree where
+buildUI devices needOutSubDev _ model = widgetTree where
   widgetTree = vstack ([
       label_ (T.pack $ model ^. chordName) [resizeFactor 1] `styleBasic` [textSize 24],
       label_ (T.pack . genProgressString 1 $  model ^. chordSetProgress) [resizeFactor 1] `styleBasic` [textSize 24],
@@ -94,7 +93,7 @@ handleEvent
   -> AppModel
   -> AppEvent
   -> [AppEventResponse AppModel AppEvent]
-handleEvent mUiInput uiOutput needOutSubDev wenv node model evt =
+handleEvent mUiInput uiOutput needOutSubDev _ _ model evt =
   let
     startTask = let i = fst $ model ^. inDev
                     o = fst $ model ^. outDev
@@ -113,14 +112,13 @@ handleEvent mUiInput uiOutput needOutSubDev wenv node model evt =
                                  ]
                       PlayStopped -> [Task startTask, Model $ model & playing .~ Playing]
                       PlayStopping -> []
-    AppStartDone -> []
     AppStopDone -> [Model $ model & playing .~ PlayStopped]
     AppDispose -> [Task disposeTask]
     AppExit -> [Task exitTask]
-    AppExitDone -> []
     AppUpdateChord name -> [Model $ model & chordName .~ name]
     AppUpdateClockProgress x -> [Model $ model & clockProgress .~ x]
     AppUpdateChordSetProgress x -> [Model $ model & chordSetProgress .~ x]
+    _ -> []
 
 outputUpdateProducer :: UiOutput -> (AppEvent -> IO ()) -> IO ()
 outputUpdateProducer uiOutput sendMsg = do
@@ -155,19 +153,19 @@ uiMain mUiInput uiOutput devices needOutSubDev = do
 createUiThread :: DeviceLists -> Bool -> IO (IO UiInput, UiUpdator)
 createUiThread devices needOutSubDev = do 
   mUiInput <- newEmptyMVar
-  tChordName <- newTVarIO ""
-  tClockProgress <- newTVarIO 0
-  tChordSetProgress <- newTVarIO 0
+  tChordName' <- newTVarIO ""
+  tClockProgress' <- newTVarIO 0
+  tChordSetProgress' <- newTVarIO 0
   _ <- forkIO $ uiMain mUiInput
-                  (UiOutput tChordName tClockProgress tChordSetProgress)
+                  (UiOutput tChordName' tClockProgress' tChordSetProgress')
                   devices needOutSubDev
 
   let
     uiInput = takeMVar mUiInput
     updateTVar tx = maybe (return ()) (atomically . writeTVar tx)
     updator (mbChordName, mbClockProgress, mbChordSetProgress)
-      =  updateTVar tChordName mbChordName
-      >> updateTVar tClockProgress mbClockProgress
-      >> updateTVar tChordSetProgress mbChordSetProgress
+      =  updateTVar tChordName' mbChordName
+      >> updateTVar tClockProgress' mbClockProgress
+      >> updateTVar tChordSetProgress' mbChordSetProgress
 
   return (uiInput, updator)

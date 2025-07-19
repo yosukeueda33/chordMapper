@@ -5,6 +5,11 @@ module Chord (
   addNoMin2ndTension ) where
 
 import Euterpea
+    ( Mode(..),
+      PitchClass(..),
+      pcToInt,
+      AbsPitch,
+      )
 import Interval
     ( Interval, iPerf, iMaj, iMin, iAug, iDim, intervalPitch )
 import Data.Maybe
@@ -37,8 +42,8 @@ data ChordType
   | ChBlackAddor
   deriving (Enum, Bounded, Read, Show)
 
-allChordType :: [ChordType]
-allChordType = [minBound .. maxBound]
+-- allChordType :: [ChordType]
+-- allChordType = [minBound .. maxBound]
 
 data Tension
   =  Ts9th
@@ -109,16 +114,16 @@ tension Ts13th = iMaj 13
 
 
 getVoicings :: Int -> Int -> ChordPitch -> [ChordPitch]
-getVoicings octRange offsetRange [] = []
+getVoicings _ _ [] = []
 getVoicings octRange offsetRange (x:xs)
-  = filter (all (\x -> x < 24 && x > -10) ) . addOffset $ (x:) <$> f xs
+  = filter (all (\x' -> x' < 24 && x' > -10) ) . addOffset $ (x:) <$> f xs
   where
     f :: ChordPitch -> [ChordPitch]
     f [] = [[]]
-    f (x:xs) = do
+    f (x'':xs'') = do
       oct <- [-octRange .. octRange]
-      rs <- f xs
-      return $ (oct * 12) + x : rs
+      rs <- f xs''
+      return $ (oct * 12) + x'' : rs
     addOffset :: [ChordPitch] -> [ChordPitch]
     addOffset chords = do
       ch <- chords
@@ -145,13 +150,6 @@ getVoicingBetweenOn :: Ord a => Int -> Int -> (ChordPitch->ChordPitch->a)
                           -> ChordPitch -> ChordPitch -> ChordPitch
 getVoicingBetweenOn offsetRange octRange scoreFunc fromChord
   = head . sortOn (scoreFunc fromChord) . getVoicings offsetRange octRange 
-
-getEnvelopeRange :: ChordPitch -> ChordPitch -> Int
-getEnvelopeRange c1 c2 = mAx - mIn
-  where
-    l = c1 ++ c2
-    mIn = minimum l
-    mAx = maximum l
 
 getEnvelopeDifference :: ChordPitch -> ChordPitch -> Int
 getEnvelopeDifference c1 c2 = sum . map abs $ [maximum c1 - maximum c2, minimum c1 - minimum c2]
@@ -292,9 +290,10 @@ getScale rootPc = map (((pcToInt rootPc) +) . fromJust . intervalPitch) . scale
                     , iMin 6 
                     , iMin 7 
                     ]
+    scale _ = []
 
 findTension :: PitchClass -> Mode -> Chord -> Degree -> [Tension]
-findTension keyPc mode (Chord rootPc typ _) deg =
+findTension keyPc mode (Chord rootPc _ _) deg =
   let
     scaledTensions = do
       let p = pcToInt rootPc
@@ -322,9 +321,9 @@ degreeToChord7thOneTension pc mode deg = Chord root typ tens
     tens = [minimum $ findTension pc mode ch7th deg]
 
 findSafePassingTension :: PitchClass -> Mode -> Chord -> Degree -> [Tension]
-findSafePassingTension keyPc mode chord@(Chord rootPc typ _) deg =
+findSafePassingTension keyPc mode cHord@(Chord rootPc typ _) deg =
   let
-    onScaleTension = findTension keyPc mode chord deg
+    onScaleTension = findTension keyPc mode cHord deg
     findPassing ts = do
                 t <- ts
                 let i = fromJust . intervalPitch $ tension t
@@ -356,87 +355,16 @@ addNoMin2ndTension (Chord rootPc typ _) =
   in Chord rootPc typ [tens]
 
 
-main :: IO ()
-main = do
-  -- let two  = Chord D ChMinor7th [Ts9th]
-  --     five = Chord G Ch7th [Ts9th]
-  --     one  = Chord C ChMajor7th [Ts9th]
-  --     six  = Chord A ChMinor7th [Ts9th]
-  -- -- print $ chordTones chord
-  -- -- print $ getVoicings 1 1 . fromJust $ chordTones two
-  -- print $ chordTones two
-  -- print $ chordTones five
-  -- print $ chordTones one
-  -- print $ chordTones six
-
-  -- let smoothFive = getVoicingBetweenOn 1 1 getEnvelopeDifference
-  --           (fromJust $ chordTones two) (fromJust $ chordTones five)
-  -- print smoothFive
-  -- let smoothOne = getVoicingBetweenOn 1 1 getEnvelopeDifference
-  --           smoothFive (fromJust $ chordTones one)
-  -- print smoothOne
-  -- let smoothSix = getVoicingBetweenOn 1 1 getEnvelopeDifference
-  --           smoothOne (fromJust $ chordTones six)
-  -- print smoothSix
-
-  -- let smooth2516 = scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
-  --         $ map (fromJust . chordTones) [two, five, one, six]
-  -- print smooth2516
-
-  -- let chordsToMusic = line . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 60))
-  -- let just2516m = chordsToMusic $ map (fromJust . chordTones) [two, five, one, six]
-  -- let smooth2516m = chordsToMusic smooth2516
-  -- writeMidi "just2516.midi" just2516m
-  -- writeMidi "smooth2516.midi" smooth2516m 
-  -- writeMidi "2516s.midi" $ just2516m :+: smooth2516m
-
-  -- let chordsToMusic = line . map (chord . map (note en . (+) 60))
-  -- let fives = getVoicings 1 1 . fromJust $ chordTones five
-  -- let ones = getVoicings 1 1 . fromJust $ chordTones one
-  -- writeMidi "G9thInv.midi" $ chordsToMusic fives
-  -- writeMidi "ChMajor9thInv.midi" $ chordsToMusic ones
-
-  -- let aMinorScale = map (`mod` 12) $ getScale A Minor
-  -- print aMinorScale
-  -- let aMinor2 = degreeToChord7th A Minor 2
-  -- print aMinor2
-  -- let aMinor2t = degreeToChord7thOneTension A Minor 2
-  -- print aMinor2t
-
-  -- let aMinor251 = map (degreeToChord7thOneTension A Minor) [2, 5, 1]
-  -- print aMinor251
-
-  -- let
-  --   deg = 2
-  --   ch7th = degreeToChord7th A Minor deg
-  --   tens = [findTension A Minor ch7th deg]
-  -- print $ map (flip mod 12) (getScale A Minor)
-  -- print $ ch7th
-  -- print tens
-
-  -- let chords = map (degreeToChord7thOnePassingTension C Minor) [4,5,3,6]
-  let chords = map (degreeToChord7thOnePassingTension F Minor) [1,4,3,5]
-  -- let chords = map (degreeToChord7thOnePassingTension A Minor) [4,1,5,6]
-  -- let chords = map (degreeToChord7thOnePassingTension D Minor) [ 1,2
-  --                                                              ,3
-  --                                                              ,4
-  --                                                              ,5
-  --                                                              ,6
-  --                                                              ,7
-  --                                                              ]
-  -- let allChords = do
-  --                   d <- [1..7]
-  --                   r <- [minBound .. maxBound]
-  --                   s <- [Major, Minor]
-  --                   return $ degreeToChord7thOnePassingTension r s d
-  -- print $ length allChords
-  print chords
-  let chordsToMusic = line
-                    . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 60))
-  let mus = chordsToMusic
-                    $ map (fromJust . chordTonesTensionAsPassing) chords
-  print mus
-  writeMidi "tmp.midi" mus
-  let smoothed = chordsToMusic . scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
-          $ map (fromJust . chordTonesTensionAsPassing) chords
-  writeMidi "smoothed.midi" smoothed
+-- main :: IO ()
+-- main = do
+--   let chords = map (degreeToChord7thOnePassingTension F Minor) [1,4,3,5]
+--   print chords
+--   let chordsToMusic = line
+--                     . map (chord . map ((\p -> note wn (p, 100::Volume)) . (+) 60))
+--   let mus = chordsToMusic
+--                     $ map (fromJust . chordTonesTensionAsPassing) chords
+--   print mus
+--   writeMidi "tmp.midi" mus
+--   let smoothed = chordsToMusic . scanl1 (getVoicingBetweenOn 1 1 getEnvelopeDifference)
+--           $ map (fromJust . chordTonesTensionAsPassing) chords
+--   writeMidi "smoothed.midi" smoothed
