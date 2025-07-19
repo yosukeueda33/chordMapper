@@ -140,12 +140,13 @@ main = do
   --Start/Stop loop.
   loopExitSig <- newEmptyMVar
   loopExitDoneSig <- newMVar ()
-  devices <- let f = map $ bimap id name
-             in bimap f f <$> getAllDevices 
+  devices <- let f = map $ second name
+             in bimap f f <$> getAllDevices :: IO ([(InputDeviceID, String)], [(OutputDeviceID, String)])
   -- UI thread.
   let needOutSubDev = isMinilab3 config
   (uiInput, uiUpdator) <- createUiThread devices needOutSubDev
   initializeMidi
+  -- Wait and execute UI input.
   let
     loop :: IO ()
     loop = do
@@ -153,24 +154,28 @@ main = do
       case i of
         (UiStart inDev outDev mbOutSubDev) -> do
           _ <- tryTakeMVar loopExitDoneSig
+          --Start Midi threads.
           _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig
                         uiUpdator config inDev outDev mbOutSubDev
           putStrLn "Loop Started."
-          loop
+          loop -- Keep listening.
         UiStop -> do
           putMVar loopExitSig ()
           takeMVar loopExitDoneSig
           putStrLn "Loop Stop Done."
           putMVar loopExitDoneSig ()
-          loop
+          loop -- Keep listening.
         UiExit -> do
           putMVar loopExitSig ()
           takeMVar loopExitDoneSig
           putStrLn "Loop Exit Done."
           putMVar loopExitDoneSig ()
   loop
+
+  -- Finish.
   terminateMidi
 
+-- Create Midi threads.
 mainLoop :: MVar () -> MVar () -> UiUpdator -> FullConfig
             -> InputDeviceID -> OutputDeviceID -> (Maybe OutputDeviceID) -> IO ()
 mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
@@ -189,12 +194,12 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
     tRecPlayOn <- newTVarIO True
     preStopSig <- newTVarIO False
     stopSig <- newTVarIO False
-    putStrLn ("Clearing MIDI Devices...")
+    putStrLn "Clearing MIDI Devices..."
     wait 0.5
     let
       qnSec = oneQnSec config
       op = do
-        putStrLn ("Initializing MIDI Devices...")
+        putStrLn "Initializing MIDI Devices..."
         _ <- forkIO $ clockLoop qnSec tChordMapSet tChordMap
                       genBuf preStopSig tChordStep uiUpdator
                       (fromIntegral $ clockOffset config)
@@ -214,7 +219,7 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
             ]
         _ <- forkIO $ midiInRec inDev inBuf subInRec
                         tPushingKeys tChordMap stopSig -- poll input and add to buffer
-        _ <- forkIO $ genControlProcess stopSig tControl -- For Special Input
+        _ <- forkIO $ controlReceiver stopSig tControl -- For Special Input
                         [ ( NextChordMapSet
                           ,  putStrLn "Chord map change registered!"
                               >> changeChordMapSet
@@ -233,7 +238,9 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
                              >> atomically (writeTVar tRecPlayOn False))
                         ] 
         let
-          sendOut, sendSubOut, sumUpOut :: Double -> IO Int
+          -- These send queued messages in ellapsed time range.
+          -- And return sent message quantity.
+          sendOut, sendSubOut, mergedSendOut :: Double -> IO Int
           sendOut ellapsed = do
             outVal1 <- atomically $ getClearMsgs inBuf
             outVal2 <- atomically $ getUpdateMsgs genBuf ellapsed
@@ -245,9 +252,8 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
               vals <- atomically (getUpdateMsgs genSubBuf ellapsed)
               sendMidiOut dev vals
               return (length vals)
-          sumUpOut ellapsed = sum <$> mapM ($ ellapsed) [sendOut, sendSubOut]
-        _ <- forkIO (midiOutRec 0.0 sumUpOut stopSig) -- take from buffer and output
-
+          mergedSendOut ellapsed = sum <$> mapM ($ ellapsed) [sendOut, sendSubOut]
+        _ <- forkIO (midiOutRec 0.0 mergedSendOut stopSig) -- take from buffer and output
         putStrLn "MIDI I/O services started."
         detectExitLoop stopSig -- should only exit this via handleCtrlC
       closeOp = do
@@ -265,6 +271,7 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
     putStrLn "Got exit"
     closeOp
 
+-- Play recorded input patterns.
 playRec :: TVar Bool -> TVar [(Int, Message)]
         -> TVar [(Time, MidiMessage)] -> TVar ChordKeyMap -> Int -> IO()
 playRec tRecPlayOn tRecData inBuf tChordMap step = do
@@ -283,22 +290,21 @@ playRec tRecPlayOn tRecData inBuf tChordMap step = do
       . atomically . addMsgs inBuf
       $ mapMaybe (fmap ((0.0,) . Std) . applyChordMap') datStep
 
-    
-genControlProcess :: TVar Bool -> TVar (Maybe ControlType)
+-- Invoke tasks by special inputs like tapping pads.
+controlReceiver :: TVar Bool -> TVar (Maybe ControlType)
                   -> [(ControlType, IO ())] -> IO ()
-genControlProcess stopSig tControl cps = do
+controlReceiver stopSig tControl cps = do
   stopNow <- readTVarIO stopSig
   unless stopNow $ do
     mbTc <- readTVarIO tControl
-    case mbTc of
-      Nothing -> return ()
-      Just tc -> do
-        snd . fromJust $ find ((==) tc. fst) cps
-        atomically $ writeTVar tControl Nothing
+    forM_ mbTc $ \tc -> do
+      snd . fromJust $ find ((==) tc. fst) cps -- Execute IO () specified by ControlType.
+      atomically $ writeTVar tControl Nothing -- Reset Control.
     -- Repeat
     wait 0.01
-    genControlProcess stopSig tControl cps 
+    controlReceiver stopSig tControl cps 
 
+-- Roll chord map set list.
 changeChordMapSet :: TVar [ChordMap] -> TVar Int -> [ChordMapSet] -> IO ()
 changeChordMapSet tChordMapSet tChordMapSetIndex cMapSL = atomically $ do
   nowI <- readTVar tChordMapSetIndex
@@ -306,6 +312,7 @@ changeChordMapSet tChordMapSet tChordMapSetIndex cMapSL = atomically $ do
   writeTVar tChordMapSet . genChordMap . chordMapSet $ cMapSL !! nextI
   writeTVar tChordMapSetIndex nextI
 
+-- Main controll of all Step related task.
 clockLoop :: Double -> TVar [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
           -> TVar Bool -> TVar Int -> UiUpdator -> Int -> (Int -> IO ())
           -> Maybe ([(Time, MidiMessage)] -> IO ())
@@ -364,7 +371,7 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
         makeMidi = Std . Sysex 0 . BL.pack 
         msgs = [ (0.0, makeMidi $ pad_light (if nowPos == 0 then lightNum - 1 else nowPos - 1) False)
                , (0.0, makeMidi $ pad_light nowPos True)]
-      in when (step `mod` (dur `div` lightNum) == 0) $ maybe (return ()) sendLights mbAddSubMsgsF
+      in when (step `mod` (dur `div` lightNum) == 0) $ mapM_ sendLights mbAddSubMsgsF
 
     pad_light :: Int -> Bool -> [Word8]
     pad_light pos on = [ 0xF0
@@ -396,6 +403,8 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
 
 type ChordMap = (Int, String, ChordKeyMap)
 
+-- Generate chord map functions from chord specifications.
+-- It's not [ChordMapEntry] -> [ChordMap] for smoothing chords.
 genChordMap :: [ChordMapEntry] -> [ChordMap]
 genChordMap cfgs =
   let
@@ -450,11 +459,13 @@ genChordMap cfgs =
     zip3 durations names mappers
 
 
+-- Generate input-output key mapping function.
+-- Trickey. Should elaborate it.
 getKeyMap :: [Key] -> ChordKeyMap
 getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
   where
     offset = -12 * 4
-    rKeyResult :: Maybe [Key] 
+    rKeyResult :: Maybe [Key] -- For first black key of a 4 key separated white key range. It's for root key.
     rKeyResult = asRightOfWkeyBlockStart <|> asLeftOfWkeyBlockStart
       where
         asRightOfWkeyBlockStart = do
@@ -465,28 +476,35 @@ getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
         getRootToneOfTheWkey :: Int -> [Key] 
         getRootToneOfTheWkey wkey
           = [head chordTones + (wkey `div` (length chordTones - 1)) * 12 + offset]
-    wKeyResult :: Maybe [Key] 
-    wKeyResult = wKeyToTones (sort $ tail chordTones) <$> keyToWhiteKeyId inputKey -- The tail for rootless voicing.
+    exceptRoot = tail -- The tail for rootless voicing.
+    wKeyResult :: Maybe [Key] -- For white key.
+    wKeyResult = wKeyToTones (sort $ exceptRoot chordTones) <$> keyToWhiteKeyId inputKey
     wKeyToTones :: [Key] -> Int -> [Key]
     wKeyToTones tones wkey = [(bNum * 12) + (tones !! x) + offset]
       where
         (bNum, x) = divMod wkey l
         l = length tones
-  
+
+-- Convert key to whiteKey id.
+-- White key id is the id of white piano key. Leftest key on 25-key is 28.
+-- The output is Nothing if the key is black.
 keyToWhiteKeyId :: Key -> Maybe Int 
 keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -> (5, 0)
   where
     (a, b) = divMod k 12
     mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
 
+-- To keep mainLoop awake.
 detectExitLoop :: TVar Bool -> IO ()
 detectExitLoop stopSignal = do
     wait 0.25 -- we only need to check for stopping periodically
     stopNow <- readTVarIO stopSignal
-    if stopNow then return () else detectExitLoop stopSignal 
+    unless stopNow $ detectExitLoop stopSignal 
 
 type MsgNoVol = (Channel, Key)
--- Start side wrapping is adhoc. It should be read from Pushing list. 
+-- Wrap up keys that starts with NoteOff or ends with NoteON
+-- by putting NoteOn on the start or NoteOff on the end.
+-- Start-side wrapping is adhoc. It should be read from Pushing list. 
 wrapUpRecData :: Int -> [(Int, Message)] -> [(Int, Message)]
 wrapUpRecData wrapLen xs = h ++ xs ++ t
   where
@@ -509,6 +527,7 @@ wrapUpRecData wrapLen xs = h ++ xs ++ t
                                  else (offSide acc ++ [(ch, kEy)], onSide acc)
     f acc _ = acc
 
+-- Record input keys to replay looping.
 recordInput :: Int -> TVar Int -> TVar Bool -> TVar Bool -> TVar Bool
             -> TVar [(Int, Message)]-> [Message] -> STM ()
 recordInput lim tChordStep tRecPreOn tRecOn tRecPlayOn tRecData msgs = do
@@ -529,6 +548,8 @@ recordInput lim tChordStep tRecPreOn tRecOn tRecPlayOn tRecData msgs = do
         writeTVar tRecData $ wrapUpRecData lim xs'
         writeTVar tRecPlayOn True
 
+-- Detect message that assigned as special input like touch pads of Minilab3.
+-- It sets TVar when special input detected.
 specialInput :: TVar (Maybe ControlType) -> [SpecialInput] -> Message -> IO ()
 specialInput tControl cfgs msg =
   let
@@ -554,6 +575,7 @@ specialInput tControl cfgs msg =
         
   in mapM_ f cfgs
 
+-- Midi input thread.
 midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)]
           -> ([Message] -> IO ())
           -> TVar PushingKeyMap
@@ -576,9 +598,12 @@ midiInRec inDev inBuf subInRec tPushingKeys tChordMap stopSignal = do
       unless (null outVal) $ addMsgs inBuf outVal
     midiInRec inDev inBuf subInRec tPushingKeys tChordMap stopSignal
 
+-- Logical imply.
 imply :: Bool -> Bool -> Bool
 imply x y = not x || y
 
+-- apply ChordMap to message.
+-- The output is List because it can be multiple keys for playing chord with one key.
 applyChordMap :: ChordKeyMap -> PushingKeyMap -> Message -> [Message]
 applyChordMap chordKeyMap _ (NoteOn ch kEy vel) = do
   k <- case chordKeyMap kEy of
@@ -596,6 +621,7 @@ applyChordMap chordKeyMap pushingKeyMap (NoteOff ch kEy vel) = do
   return $ NoteOff ch k vel
 applyChordMap _ _ m = return m
 
+-- Record input key and mapped key to track and NoteOff key that on previous ChordMap.
 updatePushingKeys :: TVar ChordKeyMap -> TVar PushingKeyMap -> [Message] -> STM ()
 updatePushingKeys tChordMap tPushingKeys = mapM_ f
   where
@@ -611,9 +637,11 @@ updatePushingKeys tChordMap tPushingKeys = mapM_ f
       writeTVar tPushingKeys newVal 
     f _ = return ()
 
+-- Get posix time.
 posixFix :: NominalDiffTime -> Double
 posixFix x = fromIntegral (round (x * 1000) :: Integer) / 1000
 
+-- Midi output thread. It just calls sendOut in loop.
 midiOutRec :: Double -> (Double -> IO Int) -> TVar Bool -> IO ()
 midiOutRec lastMsgTime sendOut stopSig = do
     wait 0.002
@@ -627,6 +655,7 @@ midiOutRec lastMsgTime sendOut stopSig = do
       let newMsgTime = if sentSize == 0 then lastMsgTime else  currT'
       midiOutRec newMsgTime sendOut stopSig
       
+-- Add message to buffer.
 addMsgs :: TVar [a] -> [a] -> STM ()
 addMsgs _ [] = return () 
 addMsgs v xs = do
@@ -634,6 +663,7 @@ addMsgs v xs = do
     let newVal = x ++ xs
     writeTVar v newVal 
 
+-- Get all messages from buffer.
 getClearMsgs :: TVar [a] -> STM [a]
 getClearMsgs v = do 
     x <- readTVar v -- what's in the buffer?
@@ -642,6 +672,7 @@ getClearMsgs v = do
                   writeTVar v [] -- empty the TVar buffer
                   return x -- return the values it had
 
+-- Get messages in specified time range from buffer.
 getUpdateMsgs :: TVar [(Time, a)] -> Time -> STM [(Time, a)]
 getUpdateMsgs v tElapsed = do
     ms <- readTVar v -- what's in the buffer?
@@ -655,10 +686,12 @@ getUpdateMsgs v tElapsed = do
                 else do -- not time yet
                     return []
 
+-- Send Midi to specific device.
 sendMidiOut :: OutputDeviceID -> [(Time, MidiMessage)] -> IO ()
 sendMidiOut _ [] = return ()
 sendMidiOut dev ms = outputMidi dev >> mapM_ (deliverMidiEvent dev . (0,) . snd) ms
 
 type Seconds = Double
+-- Wait specified seconds.
 wait :: Seconds -> IO () 
 wait s = threadDelay $ round $ s * 1000000
