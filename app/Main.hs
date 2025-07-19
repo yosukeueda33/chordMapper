@@ -226,7 +226,21 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
                           ,  putStrLn "Rec Play Stop!"
                              >> atomically (writeTVar tRecPlayOn False))
                         ] 
-        _ <- forkIO (midiOutRec 0 outDev inBuf genBuf mbOutSubDev genSubBuf stopSig) -- take from buffer and output
+        let
+          sendOut, sendSubOut, sumUpOut :: Double -> IO Int
+          sendOut ellapsed = do
+            outVal1 <- atomically $ getClearMsgs inBuf
+            outVal2 <- atomically $ getUpdateMsgs genBuf ellapsed
+            sendMidiOut outDev (outVal1++outVal2) -- send out to MIDI device
+            return $ length outVal2
+          sendSubOut ellapsed = case mbOutSubDev of
+            Nothing -> return 0
+            Just dev -> if dev == outDev then return 0 else do
+              vals <- atomically (getUpdateMsgs genSubBuf ellapsed)
+              sendMidiOut dev vals
+              return (length vals)
+          sumUpOut ellapsed = sum <$> mapM ($ ellapsed) [sendOut, sendSubOut]
+        _ <- forkIO (midiOutRec 0.0 sumUpOut stopSig) -- take from buffer and output
 
         putStrLn "MIDI I/O services started."
         detectExitLoop stopSig -- should only exit this via handleCtrlC
@@ -603,29 +617,18 @@ updatePushingKeys tChordMap tPushingKeys = mapM_ f
 posixFix :: NominalDiffTime -> Double
 posixFix x = fromIntegral (round (x * 1000) :: Integer) / 1000
 
-midiOutRec :: Double
-           -> OutputDeviceID -> TVar [(Time, MidiMessage)]
-           -> TVar [(Time, MidiMessage)]
-           -> Maybe OutputDeviceID -> TVar [(Time, MidiMessage)]
-           -> TVar Bool -> IO ()
-midiOutRec lastMsgTime outDev inBuf genBuf mbOutSubDev genSubBuf stopSig = do
-    wait 0.002 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
-    currT <- getPOSIXTime -- get the current time
-    let currT' = posixFix currT
+midiOutRec :: Double -> (Double -> IO Int) -> TVar Bool -> IO ()
+midiOutRec lastMsgTime sendOut stopSig = do
+    wait 0.002
+    stop <- readTVarIO stopSig 
+    unless stop $ do
+      currT <- getPOSIXTime -- get the current time
+      let
+        currT' = posixFix currT
         tEllapsed = currT' - lastMsgTime
-    stopNow <- readTVarIO stopSig
-    unless stopNow $ do
-        outVal1 <- atomically $ getClearMsgs inBuf -- fetch user input
-        outVal2 <- atomically $ getUpdateMsgs genBuf tEllapsed -- fetch generated music
-        let newMsgTime = if null outVal2 then lastMsgTime else  currT'
-        sendMidiOut outDev (outVal1++outVal2) -- send out to MIDI device
-        -- Sub device for like progress bar on Minilab3.
-        forM_ mbOutSubDev $ \dev -> do
-          when (dev /= outDev) $ do
-            outVal <- atomically $ getUpdateMsgs genSubBuf tEllapsed -- fetch generated music
-            sendMidiOut dev outVal -- send out to MIDI device
-
-        midiOutRec newMsgTime outDev inBuf genBuf mbOutSubDev genSubBuf stopSig
+      sentSize <- sendOut tEllapsed 
+      let newMsgTime = if sentSize == 0 then lastMsgTime else  currT'
+      midiOutRec newMsgTime sendOut stopSig
       
 addMsgs :: TVar [a] -> [a] -> STM ()
 addMsgs _ [] = return () 
