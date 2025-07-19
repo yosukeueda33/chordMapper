@@ -28,6 +28,7 @@ import qualified Data.Text as T
 import Data.Bifunctor
 import Data.Maybe
 import Data.Map (toList)
+import Data.Word (Word8)
 import Control.Monad.State
 import Codec.Midi (Channel, Key)
 import Monomer
@@ -90,6 +91,7 @@ data FullConfig = FullConfig
   { oneQnSec        :: Double
   , recStepNum      :: Natural
   , clockOffset     :: Natural
+  , isMinilab3      :: Bool
   , chordMapSetList    :: [ChordMapSet]
   , specialInputs   :: [SpecialInput]
   } deriving (Show, Generic)
@@ -132,17 +134,18 @@ main = do
   devices <- let f = map $ bimap id name
              in bimap f f <$> getAllDevices 
   -- UI thread.
-  (uiInput, uiUpdator) <- createUiThread devices
+  let needOutSubDev = isMinilab3 config
+  (uiInput, uiUpdator) <- createUiThread devices needOutSubDev
   initializeMidi
   let
     loop :: IO ()
     loop = do
       i <- uiInput
       case i of
-        (UiStart inDev outDev) -> do
+        (UiStart inDev outDev mbOutSubDev) -> do
           _ <- tryTakeMVar loopExitDoneSig
           _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig
-                        uiUpdator config inDev outDev
+                        uiUpdator config inDev outDev mbOutSubDev
           putStrLn "Loop Started."
           loop
         UiStop -> do
@@ -160,10 +163,11 @@ main = do
   terminateMidi
 
 mainLoop :: MVar () -> MVar () -> UiUpdator -> FullConfig
-            -> InputDeviceID -> OutputDeviceID -> IO ()
-mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
+            -> InputDeviceID -> OutputDeviceID -> (Maybe OutputDeviceID) -> IO ()
+mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
     inBuf <- newTVarIO [] -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
+    genSubBuf <- newTVarIO []
     tPushingKeys <- newTVarIO Map.empty
     tChordMapSet <- newTVarIO . genChordMap . chordMapSet . flip (!!) 0 $ chordMapSetList config
     tChordMapSetIndex <- newTVarIO 0
@@ -186,6 +190,11 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
                       genBuf preStopSig tChordStep uiUpdator
                       (fromIntegral $ clockOffset config)
                       (playRec tRecPlayOn tRecData inBuf tChordMap)
+                      (fmap 
+                        (\dev -> atomically . addMsgs (if dev == outDev
+                                                           then genBuf
+                                                           else genSubBuf))
+                        mbOutSubDev)
         _ <- forkIO $ midiInRec inDev inBuf
                       (specialInput tControl $ specialInputs config)
                       (recordInput (fromIntegral $ recStepNum config) tChordStep tRecPreOn tRecOn tRecPlayOn tRecData)
@@ -209,6 +218,14 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev = do
                              >> (atomically $ writeTVar tRecPlayOn False))
                         ] 
         _ <- forkIO (midiOutRec 0 outDev inBuf genBuf stopSig) -- take from buffer and output
+        case mbOutSubDev of
+          Nothing -> return ()
+          Just outSubDev
+            -> when (outSubDev /= outDev) $
+                 forkIO (midiOutSubRec 0.0 outSubDev genSubBuf stopSig)
+                 >> putStrLn "Created sub message thread."
+                 >> return ()
+
         putStrLn ("MIDI I/O services started.")
         detectExitLoop stopSig -- should only exit this via handleCtrlC
       closeOp = do
@@ -267,9 +284,11 @@ changeChordMapSet tChordMapSet tChordMapSetIndex cMapSL = atomically $ do
   writeTVar tChordMapSetIndex nextI
 
 clockLoop :: Double -> TVar [ChordMap] -> TVar ChordKeyMap -> TVar [(Time, MidiMessage)]
-          -> TVar Bool -> TVar Int -> UiUpdator -> Int -> (Int -> IO ()) -> IO ()
+          -> TVar Bool -> TVar Int -> UiUpdator -> Int -> (Int -> IO ())
+          -> (Maybe ([(Time, MidiMessage)] -> IO ()))
+          -> IO ()
 clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
-          clockDelayStepNum playRecF =
+          clockDelayStepNum playRecF mbAddSubMsgsF =
   let
     sendSingleMessage x = atomically
                         $ addMsgs genBuf
@@ -309,8 +328,31 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
                                       )
                          >> atomically (writeTVar tChordStep x)
                          >> playRecF x
+                         >> lightProgress duration x
                          )
                   >> waitSingleTick
+    lightProgress :: Int -> Int -> IO ()
+    lightProgress dur step =
+      let
+        sendLights :: ([(Time, MidiMessage)] -> IO ()) -> IO ()
+        sendLights addSubMsg = addSubMsg msgs
+        lightNum = 8
+        nowPos = step `div` (dur `div` lightNum)
+        makeMidi = Std . Sysex 0 . BL.pack 
+        msgs = [ (0.0, makeMidi $ pad_light (if nowPos == 0 then lightNum - 1 else nowPos - 1) False)
+               , (0.0, makeMidi $ pad_light nowPos True)]
+      in when (step `mod` (dur `div` lightNum) == 0) $ maybe (return ()) sendLights mbAddSubMsgsF
+
+    pad_light :: Int -> Bool -> [Word8]
+    pad_light pos on = [ 0xF0
+                       , 0x00, 0x20, 0x6B, 0x7F, 0x42
+                       , 0x02, 0x02, 0x16
+                       ]
+                       ++ [iD] ++ col ++ [0xF7]
+      where
+        iD = fromIntegral $ ((pos `mod` 8) + 4)
+        col = if on then [0x00, 0x00, 0x7F] else [0x7F, 0x7F, 0x7F]
+
 
     loop :: StateT Int IO ()
     loop = do
@@ -566,11 +608,12 @@ updatePushingKeys tChordMap tPushingKeys = mapM_ f
       writeTVar tPushingKeys newVal 
     ff _ = return ()
 
-
+posixFix :: NominalDiffTime -> Double
+posixFix x = fromIntegral (round(x * 1000)) / 1000
 
 midiOutRec :: Double -> OutputDeviceID -> TVar [(Time, MidiMessage)] -> TVar [(Time, MidiMessage)] -> TVar Bool -> IO ()
 midiOutRec lastMsgTime outDev inBuf genBuf stopSig = do
-    wait 0.001 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
+    wait 0.002 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
     currT <- getPOSIXTime -- get the current time
     let currT' = posixFix currT
         tEllapsed = currT' - lastMsgTime
@@ -581,9 +624,19 @@ midiOutRec lastMsgTime outDev inBuf genBuf stopSig = do
         let newMsgTime = if null outVal2 then lastMsgTime else  currT'
         sendMidiOut outDev (outVal1++outVal2) -- send out to MIDI device
         midiOutRec newMsgTime outDev inBuf genBuf stopSig
-    where
-      posixFix :: NominalDiffTime -> Double
-      posixFix x = fromIntegral (round(x * 1000)) / 1000
+      
+midiOutSubRec :: Double -> OutputDeviceID -> TVar [(Time, MidiMessage)] -> TVar Bool -> IO ()
+midiOutSubRec lastMsgTime outSubDev genSubBuf stopSig = do
+    wait 0.01 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
+    currT <- getPOSIXTime -- get the current time
+    let currT' = posixFix currT
+        tEllapsed = currT' - lastMsgTime
+    stopNow <- readTVarIO stopSig
+    if stopNow then return () else do
+        outVal2 <- atomically $ getUpdateMsgs genSubBuf tEllapsed -- fetch generated music
+        let newMsgTime = if null outVal2 then lastMsgTime else  currT'
+        sendMidiOut outSubDev outVal2 -- send out to MIDI device
+        midiOutSubRec newMsgTime outSubDev genSubBuf stopSig
 
 addMsgs :: TVar [a] -> [a] -> STM ()
 addMsgs v [] = return () 

@@ -26,7 +26,8 @@ data AppModel = AppModel {
   _clockProgress :: Int,
   _chordSetProgress :: Int,
   _inDev :: (InputDeviceID, String),
-  _outDev :: (OutputDeviceID, String)
+  _outDev :: (OutputDeviceID, String),
+  _outSubDev :: (OutputDeviceID, String)
 } deriving (Eq, Show)
 
 data UiOutput = UiOutput {
@@ -54,6 +55,7 @@ data AppEvent
 
 data UiInput
   = UiStart InputDeviceID OutputDeviceID
+      (Maybe OutputDeviceID) -- For like, lights on keyboard like MiniLab3 touch pads.
   | UiStop
   | UiExit
 
@@ -61,18 +63,23 @@ makeLenses 'AppModel
 
 buildUI
   :: DeviceLists
+  -> Bool
   -> WidgetEnv AppModel AppEvent
   -> AppModel
   -> WidgetNode AppModel AppEvent
-buildUI devices wenv model = widgetTree where
-  widgetTree = vstack [
+buildUI devices needOutSubDev wenv model = widgetTree where
+  widgetTree = vstack ([
       label_ (T.pack $ model ^. chordName) [resizeFactor 1] `styleBasic` [textSize 24],
       label_ (T.pack . genProgressString 1 $  model ^. chordSetProgress) [resizeFactor 1] `styleBasic` [textSize 24],
-      label_ (T.pack . genProgressString 6 $  model ^. clockProgress) [resizeFactor 1] `styleBasic` [textSize 24],
-      selectList inDev (fst devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
-      selectList outDev (snd devices) (label . T.pack . (\(iD, name) -> show iD ++ " " ++ name)),
+      label_ (T.pack . genProgressString 6 $  model ^. clockProgress) [resizeFactor 1] `styleBasic` [textSize 24]
+    ] ++ devLists ++ [
       button "Play/Stop" AppStartStop
-    ] `styleBasic` [padding 10]
+    ]) `styleBasic` [padding 10]
+  devLists = [
+      selectList inDev (fst devices) makeListLine
+    , selectList outDev (snd devices) makeListLine
+    ] ++ [selectList outSubDev (snd devices) makeListLine | needOutSubDev]
+  makeListLine (iD, name) = label . T.pack $ show iD ++ " " ++ name
 
 genProgressString :: Int -> Int -> String
 genProgressString divNum x
@@ -81,16 +88,18 @@ genProgressString divNum x
 
 handleEvent
   :: MVar UiInput -> UiOutput
+  -> Bool
   -> WidgetEnv AppModel AppEvent
   -> WidgetNode AppModel AppEvent
   -> AppModel
   -> AppEvent
   -> [AppEventResponse AppModel AppEvent]
-handleEvent mUiInput uiOutput wenv node model evt =
+handleEvent mUiInput uiOutput needOutSubDev wenv node model evt =
   let
     startTask = let i = fst $ model ^. inDev
                     o = fst $ model ^. outDev
-                    cmd = UiStart i o 
+                    mbSubOut = if needOutSubDev then Just (fst $ model ^. outSubDev) else Nothing
+                    cmd = UiStart i o mbSubOut
                 in putMVar mUiInput cmd >> return AppStartDone
     stopTask = putMVar mUiInput UiStop >> return AppStopDone
     disposeTask = return AppDisposeDone
@@ -124,12 +133,12 @@ outputUpdateProducer uiOutput sendMsg = do
   threadDelay 10000
   outputUpdateProducer uiOutput sendMsg
 
-uiMain :: MVar UiInput -> UiOutput -> DeviceLists -> IO ()
-uiMain mUiInput uiOutput devices = do
+uiMain :: MVar UiInput -> UiOutput -> DeviceLists -> Bool -> IO ()
+uiMain mUiInput uiOutput devices needOutSubDev = do
   startApp model h b config
   where
-    h = handleEvent mUiInput uiOutput :: AppEventHandler AppModel AppEvent
-    b = buildUI devices :: AppUIBuilder AppModel AppEvent
+    h = handleEvent mUiInput uiOutput needOutSubDev :: AppEventHandler AppModel AppEvent
+    b = buildUI devices needOutSubDev :: AppUIBuilder AppModel AppEvent
     config = [
       appWindowTitle "KANNASHI chordMapper",
       appTheme darkTheme,
@@ -138,16 +147,20 @@ uiMain mUiInput uiOutput devices = do
       appDisposeEvent AppDispose,
       appExitEvent AppExit
       ]
-    model = AppModel "" PlayStopped 0 0 (unsafeInputID 0, "") (unsafeOutputID 0, "") :: AppModel
+    model = AppModel "" PlayStopped 0 0
+              (unsafeInputID 0, "") (unsafeOutputID 0, "")
+              (unsafeOutputID 0, "") :: AppModel
 
 
-createUiThread :: DeviceLists -> IO (IO UiInput, UiUpdator)
-createUiThread devices = do 
+createUiThread :: DeviceLists -> Bool -> IO (IO UiInput, UiUpdator)
+createUiThread devices needOutSubDev = do 
   mUiInput <- newEmptyMVar
   tChordName <- newTVarIO ""
   tClockProgress <- newTVarIO 0
   tChordSetProgress <- newTVarIO 0
-  _ <- forkIO $ uiMain mUiInput (UiOutput tChordName tClockProgress tChordSetProgress) devices
+  _ <- forkIO $ uiMain mUiInput
+                  (UiOutput tChordName tClockProgress tChordSetProgress)
+                  devices needOutSubDev
 
   let
     uiInput = takeMVar mUiInput
