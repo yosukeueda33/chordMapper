@@ -204,10 +204,16 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
                                                            then genBuf
                                                            else genSubBuf))
                         mbOutSubDev)
-        _ <- forkIO $ midiInRec inDev inBuf
-                      (specialInput tControl $ specialInputs config)
-                      (recordInput (fromIntegral $ recStepNum config) tChordStep tRecPreOn tRecOn tRecPlayOn tRecData)
-                      tPushingKeys tChordMap tChordStep stopSig -- poll input and add to buffer
+        let
+          subInRec :: [Message] -> IO ()
+          subInRec msgs = mapM_ ($ msgs) 
+            [ mapM_ (specialInput tControl $ specialInputs config)
+            , atomically
+              . recordInput (fromIntegral $ recStepNum config)
+                  tChordStep tRecPreOn tRecOn tRecPlayOn tRecData
+            ]
+        _ <- forkIO $ midiInRec inDev inBuf subInRec
+                        tPushingKeys tChordMap stopSig -- poll input and add to buffer
         _ <- forkIO $ genControlProcess stopSig tControl -- For Special Input
                         [ ( NextChordMapSet
                           ,  putStrLn "Chord map change registered!"
@@ -504,8 +510,8 @@ wrapUpRecData wrapLen xs = h ++ xs ++ t
     f acc _ = acc
 
 recordInput :: Int -> TVar Int -> TVar Bool -> TVar Bool -> TVar Bool
-            -> TVar [(Int, Message)]-> [Message] -> IO ()
-recordInput lim tChordStep tRecPreOn tRecOn tRecPlayOn tRecData msgs = atomically $ do
+            -> TVar [(Int, Message)]-> [Message] -> STM ()
+recordInput lim tChordStep tRecPreOn tRecOn tRecPlayOn tRecData msgs = do
     preOn <- readTVar tRecPreOn
     step <- readTVar tChordStep
     when (preOn && (step == 0)) $ do
@@ -549,32 +555,26 @@ specialInput tControl cfgs msg =
   in mapM_ f cfgs
 
 midiInRec :: InputDeviceID -> TVar [(Time, MidiMessage)]
-          -> (Message -> IO ()) -> ([Message] -> IO ()) -> TVar PushingKeyMap
-          -> TVar ChordKeyMap -> TVar Int -> TVar Bool -> IO ()
-midiInRec inDev inBuf spInputF addRecF
-          tPushingKeys tChordMap tChordStep stopSignal = do
-    wait 0.01 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
-    stopNow <- readTVarIO stopSignal
-    if stopNow then return () else do
-        msgs <- mapM pollMidi [inDev] :: IO [Maybe (Time, [Message])]
-        -- Special input like sending next chord map...
-        let jMsgs = concatMap snd $ catMaybes msgs
-        mapM_ spInputF jMsgs
-        addRecF jMsgs
-        -- Normal Input.
-        atomically $ do
-          chordMap <- readTVar tChordMap
-          pushingKeys <- readTVar tPushingKeys
-          let outVal = concatMap g msgs :: [(Time, MidiMessage)]
-                        where
-                          g Nothing = []
-                          g (Just (_,ms))
-                            = map ((0,) . Std)
-                            $ ms >>= applyChordMap chordMap pushingKeys
-          updatePushingKeys tChordMap tPushingKeys msgs
-          unless (null outVal) $ addMsgs inBuf outVal
-        midiInRec inDev inBuf spInputF addRecF
-                  tPushingKeys tChordMap tChordStep stopSignal
+          -> ([Message] -> IO ())
+          -> TVar PushingKeyMap
+          -> TVar ChordKeyMap -> TVar Bool -> IO ()
+midiInRec inDev inBuf subInRec tPushingKeys tChordMap stopSignal = do
+  wait 0.01 -- must throttle! Otherwise we get lag and may overwhelm MIDI devices.
+  stopNow <- readTVarIO stopSignal
+  unless stopNow $ do
+    jMsgs <- concatMap snd . catMaybes <$> mapM pollMidi [inDev] :: IO [Message]
+    -- Special input like sending next chord map...
+    subInRec jMsgs
+    -- Normal Input.
+    atomically $ do
+      chordMap <- readTVar tChordMap
+      pushingKeys <- readTVar tPushingKeys
+      updatePushingKeys tChordMap tPushingKeys jMsgs
+      let outVal = concatMap ( map((0.0::Double,) . Std)
+                             . applyChordMap chordMap pushingKeys)
+                      jMsgs :: [(Time, MidiMessage)]
+      unless (null outVal) $ addMsgs inBuf outVal
+    midiInRec inDev inBuf subInRec tPushingKeys tChordMap stopSignal
 
 imply :: Bool -> Bool -> Bool
 imply x y = not x || y
@@ -596,23 +596,20 @@ applyChordMap chordKeyMap pushingKeyMap (NoteOff ch kEy vel) = do
   return $ NoteOff ch k vel
 applyChordMap _ _ m = return m
 
-updatePushingKeys :: TVar ChordKeyMap -> TVar PushingKeyMap -> [Maybe (Time, [Message])] -> STM ()
+updatePushingKeys :: TVar ChordKeyMap -> TVar PushingKeyMap -> [Message] -> STM ()
 updatePushingKeys tChordMap tPushingKeys = mapM_ f
   where
-    f :: Maybe (Time, [Message]) -> STM ()
-    f Nothing = return ()
-    f (Just (_, msgs)) = mapM_ ff msgs
-    ff :: Message -> STM ()
-    ff (NoteOn _ kEy _) = do
+    f :: Message -> STM ()
+    f (NoteOn _ kEy _) = do
       m <- readTVar tPushingKeys
       chordMap <- readTVar tChordMap
       let newVal = (\mks -> Map.insert kEy mks m) <$> chordMap kEy 
       mapM_ (writeTVar tPushingKeys) newVal
-    ff (NoteOff _ kEy _) = do
+    f (NoteOff _ kEy _) = do
       m <- readTVar tPushingKeys
       let newVal = Map.delete kEy m
       writeTVar tPushingKeys newVal 
-    ff _ = return ()
+    f _ = return ()
 
 posixFix :: NominalDiffTime -> Double
 posixFix x = fromIntegral (round (x * 1000) :: Integer) / 1000
