@@ -93,10 +93,8 @@ chordTones (Chord pc chordType tensions) = mapM toPitch
 
 chordTonesTensionAsPassing :: Chord -> Maybe ChordPitch
 chordTonesTensionAsPassing (Chord pc chordType tensions) =
-  -- (mapM toPitch $ intervals chordType)
   (++) <$> (mapM toPitch $ intervals chordType)
-       <*> ((map (subtract 12)) <$> (mapM (toPitch) $ map tension tensions))
-      --  <*> (mapM (toPitch) $ map tension tensions)
+       <*> ((map (subtract 12)) <$> (mapM (toPitch . tension) tensions))
   where
     toPitch :: Interval -> Maybe AbsPitch
     toPitch i = (root +) <$> intervalPitch i 
@@ -310,7 +308,7 @@ findTension keyPc mode (Chord rootPc _ _) deg =
                 , [Ts11th, TsSharp11th]
                 , [Ts13th, TsFlat13th]
                 ]
-        in concat $ map (\tg -> bool [] tg $ any (`elem` ts) tg) tgs
+        in concatMap (\tg -> bool [] tg $ any (`elem` ts) tg) tgs
       else ts
   in addAltered scaledTensions 
 

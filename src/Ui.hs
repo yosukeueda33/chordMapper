@@ -122,9 +122,7 @@ handleEvent mUiInput uiOutput needOutSubDev _ _ model evt =
 
 outputUpdateProducer :: UiOutput -> (AppEvent -> IO ()) -> IO ()
 outputUpdateProducer uiOutput sendMsg = do
-  let
-    f event elm = (event <$> (readTVarIO $ elm uiOutput))
-                  >>= sendMsg
+  let f event elm = readTVarIO (elm uiOutput) >>= sendMsg . event
   f AppUpdateChord tChordName
   f AppUpdateClockProgress tClockProgress
   f AppUpdateChordSetProgress tChordSetProgress
