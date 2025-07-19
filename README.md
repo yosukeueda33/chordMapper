@@ -174,5 +174,5 @@ specialInputs = [
 - [ ] Modify UI.
 - [ ] Wider MIDI key (now only 25-key device works(maybe))
 - [ ] Octave change
-- [ ] Progress bar on Minilab3 touch pads.
+- [x] Progress bar on Minilab3 touch pads.
 - [ ] Send some config written MIDI message at step loop timing.
