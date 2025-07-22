@@ -2,7 +2,6 @@ APPNAME = chordMapper
 BINDIR = ./AppDir/usr/bin
 USRDIR = ./AppDir/usr
 BINFNAME = chordMapper-exe
-
 .DEFAULT_GOAL := help
 
 help:
@@ -10,9 +9,13 @@ help:
 
 # wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
 # chmod +x linuxdeploy-x86_64.AppImage
+LINUXDEPLOY = ./linuxdeploy-x86_64.AppImage
+PACKITEMS = ./pack_items
+PACKLINUXOBJS =  $(BINDIR)/$(BINFNAME) $(USRDIR)/assets $(USRDIR)/config ./AppDir/$(APPNAME).desktop \
+			./AppDir/chordMapper.png ./AppDir/AppRun
 
 $(BINDIR):
-	./linuxdeploy-x86_64.AppImage --appdir ./AppDir
+	$(LINUXDEPLOY) --appdir ./AppDir
 
 build: $(BINDIR)
 	stack build &&\
@@ -29,10 +32,13 @@ run: $(BINDIR)/$(BINFNAME) $(USRDIR)/assets $(USRDIR)/config
 	$(BINDIR)/$(BINFNAME) $(ARGS)
 
 ./AppDir/$(APPNAME).desktop:
-	cp ./$(APPNAME).desktop ./AppDir/
+	cp $(PACKITEMS)/$(APPNAME).desktop ./AppDir/
+
+./AppDir/AppRun:
+	cp $(PACKITEMS)/AppRun ./AppDir/
 
 ./AppDir/chordMapper.png:
 	cp ./imgs/chordMapper.png AppDir/
 
-pack-linux: $(BINDIR)/$(BINFNAME) $(USRDIR)/assets $(USRDIR)/config ./AppDir/$(APPNAME).desktop ./AppDir/chordMapper.png
-	./linuxdeploy-x86_64.AppImage --appdir ./AppDir --output appimage
+pack-linux: $(PACKLINUXOBJS)
+	$(LINUXDEPLOY) --appdir ./AppDir --output appimage
