@@ -23,8 +23,11 @@ import Euterpea.IO.MIDI.MidiIO
       getAllDevices )
 import System.Exit
 import System.IO
+import System.FilePath ((</>), takeDirectory)
+import System.Directory (doesFileExist, makeAbsolute)
 import Data.List
 import System.Environment
+import Data.Functor ( (<&>) )
 import Control.Concurrent
 import Control.Concurrent.STM
 import Data.Time
@@ -111,25 +114,38 @@ instance Dhall.Interpret ChordMapSet
 instance Dhall.Interpret SpecialInput
 instance Dhall.Interpret FullConfig
 
+genPath :: IO (FilePath, FilePath) 
+genPath = (,) <$> (getArgs >>= parse) <*> getFontPath
+  where
+    parse :: [String] -> IO FilePath
+    parse ["-h"] = usage >> exit
+    parse ["-v"] = version >> exit
+    parse [] =  projDir <&> (</> "config" </> "default.dhall")
+    parse [x] = makeAbsolute x
+    parse _ = usage >> exit
+    version = putStrLn "chordMapper version 0.0"
+    usage = putStrLn "Usage: chordMapper [-v|-h|CONFIG_PATH]"
+    exit = exitSuccess
+    projDir = (</> "..") . takeDirectory <$> getExecutablePath 
+
+    getFontPath :: IO FilePath
+    getFontPath =  projDir <&> (</> "assets" </> "fonts" </> "Roboto-Regular.ttf")
+
+checkFilePath :: String -> FilePath -> IO ()
+checkFilePath typ path = do
+  putStrLn $ "Specified " ++ typ ++ " file path: " ++ path
+  exist <- doesFileExist path
+  unless exist $ putStrLn "  is not found..." >> exitFailure
+
 main :: IO ()
 main = do
-  -- Read command line arg.
-  fname <- 
-    let
-      parse :: [String] -> IO String
-      parse ["-h"] = usage >> exit
-      parse ["-v"] = version >> exit
-      parse [] = return "./config/default.dhall"
-      parse xs = maybe (usage >> exit) return $ listToMaybe xs 
-      version = putStrLn "chordMapper version 0.0"
-      usage = putStrLn "Usage: chordMapper [-vh] [config dhall file path]"
-      exit = exitWith ExitSuccess
-    in
-      T.pack <$> (getArgs >>= parse) :: IO Text
-  putStrLn $ "config file path:" ++ (T.unpack fname)
+  -- Read file path.
+  (cfgPath, fontPath) <- genPath
+  checkFilePath "config" cfgPath
+  checkFilePath "font" fontPath
 
   -- Load config.
-  config <- Dhall.input Dhall.auto fname :: IO FullConfig
+  config <- Dhall.input Dhall.auto $ T.pack cfgPath :: IO FullConfig
   print config
 
   -- Initialize buffers.
@@ -144,7 +160,7 @@ main = do
              in bimap f f <$> getAllDevices :: IO ([(InputDeviceID, String)], [(OutputDeviceID, String)])
   -- UI thread.
   let needOutSubDev = isMinilab3 config
-  (uiInput, uiUpdator) <- createUiThread devices needOutSubDev
+  (uiInput, uiUpdator) <- createUiThread devices needOutSubDev $ T.pack fontPath
   initializeMidi
   -- Wait and execute UI input.
   let

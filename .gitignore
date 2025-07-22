@@ -4,3 +4,6 @@
 *.cabal
 stack.yaml.lock
 .vscode/*
+*.AppImage
+appimage-build/*
+AppDir/*

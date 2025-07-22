@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=chordMapper
+Exec=AppRun
+Icon=chordMapper
+Categories=AudioVideo;Audio;Midi;
+Comment=MIDI controller. Dynamically maps chords to MIDI keys.
+Terminal=true

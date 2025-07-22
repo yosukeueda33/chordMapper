@@ -37,6 +37,8 @@ dependencies:
 - text-show
 - lens
 - dhall
+- filepath
+- directory
 
 ghc-options:
 - -Wall

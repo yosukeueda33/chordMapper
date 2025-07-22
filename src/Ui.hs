@@ -129,8 +129,8 @@ outputUpdateProducer uiOutput sendMsg = do
   threadDelay 10000
   outputUpdateProducer uiOutput sendMsg
 
-uiMain :: MVar UiInput -> UiOutput -> DeviceLists -> Bool -> IO ()
-uiMain mUiInput uiOutput devices needOutSubDev = do
+uiMain :: MVar UiInput -> UiOutput -> DeviceLists -> Bool -> T.Text -> IO ()
+uiMain mUiInput uiOutput devices needOutSubDev fontPath = do
   startApp model h b config
   where
     h = handleEvent mUiInput uiOutput needOutSubDev :: AppEventHandler AppModel AppEvent
@@ -138,7 +138,7 @@ uiMain mUiInput uiOutput devices needOutSubDev = do
     config = [
       appWindowTitle "KANNASHI chordMapper",
       appTheme darkTheme,
-      appFontDef "Regular" "./assets/fonts/Roboto-Regular.ttf",
+      appFontDef "Regular" fontPath,
       appInitEvent AppInit,
       appDisposeEvent AppDispose,
       appExitEvent AppExit
@@ -148,15 +148,15 @@ uiMain mUiInput uiOutput devices needOutSubDev = do
               (unsafeOutputID 0, "") :: AppModel
 
 
-createUiThread :: DeviceLists -> Bool -> IO (IO UiInput, UiUpdator)
-createUiThread devices needOutSubDev = do 
+createUiThread :: DeviceLists -> Bool -> T.Text -> IO (IO UiInput, UiUpdator)
+createUiThread devices needOutSubDev fontPath = do 
   mUiInput <- newEmptyMVar
   tChordName' <- newTVarIO ""
   tClockProgress' <- newTVarIO 0
   tChordSetProgress' <- newTVarIO 0
   _ <- forkIO $ uiMain mUiInput
                   (UiOutput tChordName' tClockProgress' tChordSetProgress')
-                  devices needOutSubDev
+                  devices needOutSubDev fontPath
 
   let
     uiInput = takeMVar mUiInput
