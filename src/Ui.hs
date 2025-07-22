@@ -60,6 +60,10 @@ data UiInput
 
 makeLenses 'AppModel
 
+when' :: Bool -> [a] -> [a]
+when' True xs = xs
+when' False _  = []
+
 buildUI
   :: DeviceLists
   -> Bool
@@ -71,13 +75,19 @@ buildUI devices needOutSubDev _ model = widgetTree where
       label_ (T.pack $ model ^. chordName) [resizeFactor 1] `styleBasic` [textSize 24],
       label_ (T.pack . genProgressString 1 $  model ^. chordSetProgress) [resizeFactor 1] `styleBasic` [textSize 24],
       label_ (T.pack . genProgressString 6 $  model ^. clockProgress) [resizeFactor 1] `styleBasic` [textSize 24]
-    ] ++ devLists ++ [
+    ]
+    ++ devLists
+    ++ [
       button "Play/Stop" AppStartStop
     ]) `styleBasic` [padding 10]
   devLists = [
-      selectList inDev (fst devices) makeListLine
+      label_  "Select input device:" []
+    , selectList inDev (fst devices) makeListLine
+    , label_  "Select output device:" []
     , selectList outDev (snd devices) makeListLine
-    ] ++ [selectList outSubDev (snd devices) makeListLine | needOutSubDev]
+    ]
+    ++ when' needOutSubDev [ label_  "Select special output device:" []
+                           , selectList outSubDev (snd devices) makeListLine]
   makeListLine (iD, name) = label . T.pack $ show iD ++ " " ++ name
 
 genProgressString :: Int -> Int -> String
