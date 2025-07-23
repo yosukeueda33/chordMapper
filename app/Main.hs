@@ -503,12 +503,13 @@ getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
 
 -- Convert key to whiteKey id.
 -- White key id is the id of white piano key. Leftest key on 25-key is 28.
--- The output is Nothing if the key is black.
+-- The output is Nothing when the key is black.
 keyToWhiteKeyId :: Key -> Maybe Int 
 keyToWhiteKeyId k = (+ (7 * a)) <$> mb -- 48 -> 28, 60 -> 35, 55 -> (4, 4), 60 -> (5, 0)
   where
     (a, b) = divMod k 12
-    mb = elemIndex b [0, 2, 4, 5, 7, 9, 11]
+    mb = elemIndex b whiteKeys
+    whiteKeys = [0, 2, 4, 5, 7, 9, 11]
 
 -- To keep mainLoop awake.
 detectExitLoop :: TVar Bool -> IO ()
@@ -622,14 +623,10 @@ imply x y = not x || y
 -- The output is List because it can be multiple keys for playing chord with one key.
 applyChordMap :: ChordKeyMap -> PushingKeyMap -> Message -> [Message]
 applyChordMap chordKeyMap _ (NoteOn ch kEy vel) = do
-  k <- case chordKeyMap kEy of
-        Just ks -> ks
-        Nothing -> return kEy
+  k <- fromMaybe [] $ chordKeyMap kEy
   return $ NoteOn ch k vel
 applyChordMap chordKeyMap pushingKeyMap (NoteOff ch kEy vel) = do
-  k <- case Map.lookup kEy pushingKeyMap of
-        Just ks -> ks
-        Nothing -> return kEy
+  k <- fromMaybe [] $ Map.lookup kEy pushingKeyMap
   -- Cancel OFF except last one when there multiple ON.
   let pushingCount
         = length . filter (k ==). concatMap snd $ toList pushingKeyMap
