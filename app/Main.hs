@@ -475,31 +475,48 @@ genChordMap cfgs =
     zip3 durations names mappers
 
 
+type BlockId = Int
+type WhiteInBlockId = Int
+type BlackInBlockId = Int
 -- Generate input-output key mapping function.
 -- Trickey. Should elaborate it.
 getKeyMap :: [Key] -> ChordKeyMap
-getKeyMap chordTones inputKey = rKeyResult <|> wKeyResult
+getKeyMap chordTones inputKey = whiteKeyResult <|> blackKeyResult
   where
     offset = -12 * 4
-    rKeyResult :: Maybe [Key] -- For first black key of a 4 key separated white key range. It's for root key.
-    rKeyResult = asRightOfWkeyBlockStart <|> asLeftOfWkeyBlockStart
-      where
-        asRightOfWkeyBlockStart = do
-          x <- keyToWhiteKeyId (inputKey - 1)
-          guard $ x `mod` 4 == 0
-          return $ getRootToneOfTheWkey x
-        asLeftOfWkeyBlockStart = Nothing -- For the case the start of white key block is B or F.
-        getRootToneOfTheWkey :: Int -> [Key] 
-        getRootToneOfTheWkey wkey
-          = [head chordTones + (wkey `div` (length chordTones - 1)) * 12 + offset]
-    exceptRoot = tail -- The tail for rootless voicing.
-    wKeyResult :: Maybe [Key] -- For white key.
-    wKeyResult = wKeyToTones (sort $ exceptRoot chordTones) <$> keyToWhiteKeyId inputKey
-    wKeyToTones :: [Key] -> Int -> [Key]
-    wKeyToTones tones wkey = [(bNum * 12) + (tones !! x) + offset]
-      where
-        (bNum, x) = divMod wkey l
-        l = length tones
+    blackKeyResult :: Maybe [Key] -- For first black key of a Block (4 key separated white key range). It's for root key.
+    blackKeyResult = bKeyToTones <$> bKeyIds inputKey
+    bKeyIds :: Key -> Maybe (BlockId, BlackInBlockId)
+    bKeyIds kEy =
+      let
+        isBlack k = (k `mod` 12) `elem` [1, 3, 6, 8, 10]
+        getBlackInBlockId :: BlockId -> Key -> BlackInBlockId
+        getBlackInBlockId bId tKey =
+          if isBlack tKey
+            then if bId == keyToBlockId (tKey-1)
+                   then 1 + getBlackInBlockId bId (tKey-2)
+                   else 0
+            else getBlackInBlockId bId (tKey-1)
+        keyToBlockId = fst . wKeyBlockIds . fromJust . keyToWhiteKeyId
+      in do
+        guard $ isBlack kEy
+        let bId = keyToBlockId (kEy-1)  
+            bbId = getBlackInBlockId bId (kEy-2)
+        return (bId, bbId)
+    bKeyToTones :: (BlockId, BlackInBlockId) -> [Key]
+    bKeyToTones (bId, bbId)
+      | bbId == 0 = [bId * 12 + head chordTones + offset] -- root
+      | bbId == 1 = map (bId * 12 + offset +) $ take 3 chordTones  -- triad
+      | bbId == 2 = map (bId * 12 + offset +) . take 3 $ tail chordTones  -- rootless upper triad
+      | otherwise = []
+    wKeyTones = sort $ tail chordTones
+    whiteKeyResult :: Maybe [Key] -- For white key.
+    whiteKeyResult = wKeyToTones wKeyTones <$> keyToWhiteKeyId inputKey
+    wKeyBlockIds:: Key -> (BlockId, WhiteInBlockId)
+    wKeyBlockIds wkey = divMod wkey $ length wKeyTones
+    wKeyToTones :: [Key] -> Key -> [Key]
+    wKeyToTones tones wkey = [(bId * 12) + (tones !! wbId) + offset]
+      where (bId, wbId) = wKeyBlockIds wkey
 
 -- Convert key to whiteKey id.
 -- White key id is the id of white piano key. Leftest key on 25-key is 28.
