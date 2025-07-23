@@ -297,14 +297,14 @@ playRec tRecPlayOn tRecData inBuf tChordMap step = do
     cm <- readTVarIO tChordMap
     let
       datStep = map snd $ filter ((==) step . fst) datAll :: [Message]
-      applyChordMap' :: Message -> Maybe Message
-      applyChordMap' (NoteOn chan kEy vol) = (\x -> NoteOn chan x vol) . head <$> cm kEy
-      applyChordMap' (NoteOff chan kEy vol) = (\x -> NoteOff chan x vol) . head <$> cm kEy
+      applyChordMap' :: Message -> Maybe [Message]
+      applyChordMap' (NoteOn chan kEy vol) = map (\x -> NoteOn chan x vol) <$> cm kEy
+      applyChordMap' (NoteOff chan kEy vol) = map (\x -> NoteOff chan x vol) <$> cm kEy
       applyChordMap' _ = Nothing
-
-    unless (null datAll)
-      . atomically . addMsgs inBuf
-      $ mapMaybe (fmap ((0.0,) . Std) . applyChordMap') datStep
+      registerMsg = unless (null datAll)
+                  . atomically . addMsgs inBuf . map ((0.0,) . Std)
+                  . concat . mapMaybe applyChordMap'
+    registerMsg datStep
 
 -- Invoke tasks by special inputs like tapping pads.
 controlReceiver :: TVar Bool -> TVar (Maybe ControlType)
