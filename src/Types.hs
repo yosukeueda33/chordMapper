@@ -1,4 +1,4 @@
-module Types where
+module Types(PushingKeyMap, ChordKeyMap) where
 
 import qualified Data.Map as Map
 import Codec.Midi (Key)
