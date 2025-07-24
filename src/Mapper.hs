@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 
-module Mapper(mapperMain) where
+module Mapper(mapperMain, getKeyMap) where
 
 import Euterpea
     ( Mode(..),

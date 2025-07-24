@@ -76,3 +76,5 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - chordMapper
+    - hspec
+    - QuickCheck
