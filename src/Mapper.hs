@@ -394,7 +394,7 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
 type ChordMap = (Int, String, ChordKeyMap)
 
 -- Generate chord map functions from chord specifications.
--- It's not [ChordMapEntry] -> [ChordMap] for smoothing chords.
+-- It's not "ChordMapEntry -> ChordMap" for smoothing chords.
 genChordMap :: [ChordMapEntry] -> [ChordMap]
 genChordMap cfgs =
   let
