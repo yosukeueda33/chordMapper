@@ -170,7 +170,7 @@ mapperMain = do
 mainLoop :: MVar () -> MVar () -> UiUpdator -> FullConfig
             -> InputDeviceID -> OutputDeviceID -> (Maybe OutputDeviceID) -> IO ()
 mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
-    inBuf <- newTVarIO [] -- MIDI buffer for user input 
+    inBuf <- newTVarIO [] :: IO (TVar [(Time, MidiMessage)]) -- MIDI buffer for user input 
     genBuf <- newTVarIO [] -- MIDI buffer for generated values
     genSubBuf <- newTVarIO []
     tPushingKeys <- newTVarIO Map.empty
@@ -179,14 +179,16 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
     tChordMap <- newTVarIO (const Nothing)
     tControl <- newTVarIO Nothing
     tChordStep <- newTVarIO 0
-    tRecPreOn <- newTVarIO False
-    tRecOn <- newTVarIO False
-    tRecData <- newTVarIO []
-    tRecPlayOn <- newTVarIO True
     preStopSig <- newTVarIO False
     stopSig <- newTVarIO False
     putStrLn "Clearing MIDI Devices..."
     wait 0.5
+    (getRecData, recorder, recStart, recPlayResume, recPlayStop)
+      <- createRecPlay tChordMap (fromIntegral $ recStepNum config)
+           :: IO ( Int -> IO [(Time, MidiMessage)]
+                 , Int -> [Message] -> STM ()
+                 , IO () , IO () , IO ()
+                 )
     let
       qnSec = oneQnSec config
       op = do
@@ -194,9 +196,7 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
         _ <- forkIO $ clockLoop qnSec tChordMapSet tChordMap
                         genBuf preStopSig tChordStep uiUpdator
                         (fromIntegral $ clockOffset config)
-                        (playRec tRecPlayOn tRecData
-                          (atomically . addMsgs inBuf)
-                          tChordMap)
+                        (getRecData >=> atomically . addMsgs inBuf)
                         (fmap 
                           (\dev -> atomically . addMsgs (if dev == outDev
                                                              then genBuf
@@ -205,11 +205,9 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
         let
           subInRec :: [Message] -> IO ()
           subInRec msgs = mapM_ ($ msgs) 
-            [ mapM_ (specialInput tControl $ specialInputs config)
-            , atomically
-              . recordInput (fromIntegral $ recStepNum config)
-                  tChordStep tRecPreOn tRecOn tRecPlayOn tRecData
-            ]
+            ([ mapM_ (specialInput tControl $ specialInputs config)
+            , \msgs' -> atomically (readTVar tChordStep >>= flip recorder msgs')
+            ]:: [[Message] -> IO ()])
         _ <- forkIO $ midiInRec inDev inBuf subInRec
                         tPushingKeys tChordMap stopSig -- poll input and add to buffer
         _ <- forkIO $ controlReceiver stopSig tControl -- For Special Input
@@ -220,15 +218,13 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
                                   (chordMapSetList config))
                         , ( RecStart
                           ,  putStrLn "Rec Start!"
-                             >> atomically ( do
-                                  writeTVar tRecPreOn True
-                                  writeTVar tRecOn False))
+                             >> recStart)
                         , ( RecPlayResume
                           ,  putStrLn "Rec Play Resume!"
-                             >> atomically (writeTVar tRecPlayOn True))
+                             >> recPlayResume)
                         , ( RecPlayStop
                           ,  putStrLn "Rec Play Stop!"
-                             >> atomically (writeTVar tRecPlayOn False))
+                             >> recPlayStop)
                         ] 
         let
           -- These send queued messages in ellapsed time range.
@@ -501,7 +497,6 @@ specialInput tControl cfgs msg =
     f :: SpecialInput -> IO ()
     f cfg =
       let
-
         cfgMsg :: Message
         cfgMsg = case (T.unpack $ messageType cfg) of
           "NoteOn" -> NoteOn
