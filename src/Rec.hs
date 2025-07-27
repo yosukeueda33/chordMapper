@@ -1,6 +1,6 @@
 {-# LANGUAGE TupleSections #-}
 
-module Rec(createRecPlay, wrapUpRecData, filterUnsolvedRecData) where
+module Rec(createRecPlay, wrapUpRecData, filterUnsolvedRecData, getMsgToStop) where
 
 import Control.Concurrent.STM
     ( atomically,
@@ -15,28 +15,39 @@ import Euterpea.IO.MIDI.MidiIO ( Time )
 import Types ( ChordKeyMap )
 import Codec.Midi (Channel, Key)
 import Control.Monad ( when )
-import Data.List ( delete )
+import Data.List ( delete, sortOn )
 import Data.Maybe ( mapMaybe )
 
 createRecPlay :: TVar ChordKeyMap -> Int
               -> IO ( Int -> IO [(Time, MidiMessage)]
                     , Int -> [Message] -> STM ()
+                    , Int -> STM [Message]
                     , IO (), IO (), IO ()
                     )
 createRecPlay tChordMap lim = do
   tRecPreOn <- newTVarIO False
   tRecOn <- newTVarIO False
-  tRecData <- newTVarIO []
+  tRecData <- newTVarIO [] :: IO (TVar [(Int, Message)])
   tRecPlayOn <- newTVarIO True
   let
     getRecData' = getRecData tRecPlayOn tRecData tChordMap
     recorder = recordInput lim tRecPreOn tRecOn tRecPlayOn tRecData
+    getMsgToStop' step = getMsgToStop step <$> readTVar tRecData <*> readTVar tChordMap
     recStart = atomically $ writeTVar tRecPreOn True
                             >> writeTVar tRecOn False
     recPlayStop =  atomically $ writeTVar tRecPlayOn False
     recPlayResume = atomically $ writeTVar tRecPlayOn True
-  return (getRecData', recorder, recStart, recPlayResume, recPlayStop)
+  return (getRecData', recorder, getMsgToStop', recStart, recPlayResume, recPlayStop)
 
+getMsgToStop :: Int -> [(Int, Message)] -> ChordKeyMap -> [Message]
+getMsgToStop step recData cm
+  = concat$ mapMaybe (\(ch, key) -> map (($ 0) . NoteOff ch) <$> cm key) unsolved
+    where unsolved = snd $ filterUnsolvedRecData 0 step recData :: [(Channel, Key)]
+
+applyChordMap' :: ChordKeyMap -> Message -> Maybe [Message]
+applyChordMap' cm (NoteOn chan kEy vol) = map (\x -> NoteOn chan x vol) <$> cm kEy
+applyChordMap' cm (NoteOff chan kEy vol) = map (\x -> NoteOff chan x vol) <$> cm kEy
+applyChordMap' _ _ = Nothing
 
 -- Play recorded input patterns.
 getRecData :: TVar Bool -> TVar [(Int, Message)]
@@ -48,12 +59,8 @@ getRecData tRecPlayOn tRecData tChordMap step = do
   cm <- readTVarIO tChordMap
   let
     datStep = map snd $ filter ((==) step . fst) datAll :: [Message]
-    applyChordMap' :: Message -> Maybe [Message]
-    applyChordMap' (NoteOn chan kEy vol) = map (\x -> NoteOn chan x vol) <$> cm kEy
-    applyChordMap' (NoteOff chan kEy vol) = map (\x -> NoteOff chan x vol) <$> cm kEy
-    applyChordMap' _ = Nothing
     cvtMsg :: [Message] -> [(Time, MidiMessage)]
-    cvtMsg = map ((0.0,) . Std) . concat . mapMaybe applyChordMap'
+    cvtMsg = map ((0.0,) . Std) . concat . mapMaybe (applyChordMap' cm)
   return $ if on then cvtMsg datStep else []
 
 -- Record input keys to replay looping.
@@ -93,11 +100,12 @@ wrapUpRecData wrapLen xs = h ++ xs ++ t
     t = map (\(ch, kEy) -> (wrapLen-1, NoteOff ch kEy offVol)) unsolvedOn
     unsolvedOff = fst r
     unsolvedOn = snd r
-    r = filterUnsolvedRecData 0 (wrapLen-1) $ map snd xs
+    r = filterUnsolvedRecData 0 (wrapLen-1) xs
 
-filterUnsolvedRecData :: Int -> Int -> [Message] -> (UnsolvedOff, UnsolvedOn)
-filterUnsolvedRecData start end = foldl accFunc ([], [])
-                         . take (end - start + 1). drop start
+filterUnsolvedRecData :: Int -> Int -> [(Int, Message)] -> (UnsolvedOff, UnsolvedOn)
+filterUnsolvedRecData start end
+  = foldl accFunc ([], []) . map snd . sortOn fst
+    . filter ((\x -> start <= x && x <= end) . fst)
   where
     offSide = fst
     onSide = snd

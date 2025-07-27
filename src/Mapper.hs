@@ -183,12 +183,8 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
     stopSig <- newTVarIO False
     putStrLn "Clearing MIDI Devices..."
     wait 0.5
-    (getRecData, recorder, recStart, recPlayResume, recPlayStop)
+    (getRecData, recorder, getMsgToStop, recStart, recPlayResume, recPlayStop)
       <- createRecPlay tChordMap (fromIntegral $ recStepNum config)
-           :: IO ( Int -> IO [(Time, MidiMessage)]
-                 , Int -> [Message] -> STM ()
-                 , IO () , IO () , IO ()
-                 )
     let
       qnSec = oneQnSec config
       op = do
@@ -224,7 +220,12 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
                              >> recPlayResume)
                         , ( RecPlayStop
                           ,  putStrLn "Rec Play Stop!"
-                             >> recPlayStop)
+                               >> recPlayStop
+                               >> atomically
+                                    ( readTVar tChordStep
+                                      >>= getMsgToStop
+                                      >>= addMsgs inBuf
+                                           . map ((0.0,) . Std)))
                         ] 
         let
           -- These send queued messages in ellapsed time range.
