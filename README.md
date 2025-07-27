@@ -1,6 +1,8 @@
 # KANNASHI chordMapper
 
-This is a MIDI controller software. It maps chord notes to each musical keyboard keys dynamically without wrong notes. Sound's wired huh? Please see the explanation video on YouTube:  
+[![Haskell CI (Stack)](https://github.com/yosukeueda33/chordMapper/actions/workflows/ci.yml/badge.svg)](https://github.com/yosukeueda33/chordMapper/actions/workflows/ci.yml)
+
+This is a MIDI controller(converter) software. It maps chord notes to each MIDI keyboard keys dynamically without out-of-chord notes. Sound's wired right? Please see the explanation video on YouTube:  
 *Under construction
 
 \* The KANNASHI is a Kumamoto prefecture dialect. That means "Not knowing the limits" or "thoughtless".
@@ -12,7 +14,7 @@ This is a MIDI controller software. It maps chord notes to each musical keyboard
 This tool uses midi piano input and some midi output.
 If you don't have anything I will write, never mind. Any midi in-out device is OK as long as it generates or receives usual MIDI signal.
 
-!!!IMPORTANT!!!  
+**!!!IMPORTANT!!!**  
 Volca fm2 has sequencer function that receives MIDI realtime command. It is not use for this chordMapper. Please Disable it according to the user manual. The realtime commands are for drums.
 
 
@@ -64,24 +66,30 @@ Source  Event                  Ch  Data
 #### Ubuntu
 You need Haskell's `stack` tool to build this tool. I recommend  `ghcup` since it includes `stack` and other useful tools for haskell development.
 
-Install these dev library before build.
+Install these dev library and tool before build.
 ```bash
-sudo apt install libfreetype-dev libsdl2-dev libglew-dev libasound2-dev
+sudo apt install -y libasound2-dev libfreetype-dev libsdl2-dev libglew-dev libgl1-mesa-dev libglfw3-dev
+
 ```
 
 Build commands.
 ```bash
 git clone --recurse-submodules [URL OF THIS REPO]
 cd THIS_REPO_DIR
-stack build
+wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+chmod +x linuxdeploy-x86_64.AppImage
+make build
 ```
 
 ## Getting Started
 If you have binary, execute it.
-If you built from the souce, execute this command in the cloned dir.
-
 ```bash
-stack run
+./chordMapper-x86_64.AppImage
+```
+
+If you built from the souce, execute this command in the cloned dir.
+```bash
+make run
 ```
 
 This is the UI of the chordMapper. Sorry, it's still awful.
@@ -106,10 +114,8 @@ Dhall is configuration file extension that is not widely used. I chose it becaus
 
 You can pass path of your config to chordMapper like this.
 ```shell
-stack run -- ./your_config.dhall
+make run ARGS="./config/mine.dhall"
 ```
-
-!!!IMPORTANT!!! The file path requires the "./" for relative path from current directory.
 
 ### Quoter note duration 
 This sets one quoter note duration in second. 
@@ -118,12 +124,26 @@ One quoter note is for 24 MIDI realtime clock step.
 oneQnSec = 0.6
 ```
 
-## Real time clock start offset from chord change.
+### Real time clock start offset from chord change.
 This sets MIDI realtime clock offset number to make chord change timing earlier than drums.
 This makes chord change easier when you rushing than drums.
 ```dhall
 clockOffset = 5
 ```
+
+### Push pattern recording length.
+See Start/Stop/Resume area also.
+It sets recording length. The unit is MIDI realtime clock step. 
+```dhall
+recStepNum = 24*4: Natural -- Shouldn't be changed. It's still buggy.
+```
+
+### Enable progress bar on Minilab3 touch pad.
+This setting enables progress bar-like lighting on Minilab3's touch pad light.
+```dhall
+isMinilab3 = True
+```
+You need to select Minilab3 port on the UI before start looping.
 
 ### Chord progression
 You can write `direct chord style` with `getAbsChord` function.
@@ -154,7 +174,7 @@ let scale = "Major"
 The `durationCnf` is steps of MIDI realtime clock. `24*4` means 96 step.
 
 ### Special keys.
-You can configure unused keys as for switching any chordMapper specific function. There is only one function now though.
+You can configure unused keys as for switching any chordMapper specific function.
 The `aseqdump` command is useful to know what MIDI message generated when target button pressed.
 
 #### Go to next chord map set.
@@ -162,6 +182,21 @@ This setting makes touch pad that marked loop on in on Minilab3 as a function th
 ```dhall
 specialInputs = [
   {controlType = "NextChordMapSet", messageType="NoteOn", channelNum=9, keyNum=39}
+]
+```
+
+#### Start/Stop/Resume push pattern recording.
+This setting makes touch pad that marked Rec to Start recoding,
+Play to resume, Stop to stop.
+The recording starts at next chord set start after pushing recording.
+Playing the recording pattern starts at next chord start.
+Pushing stop stops playing push pattern.
+Pushing resume restarts playing push pattern.
+```dhall
+specialInputs = [
+    {controlType = "RecStart", messageType="NoteOn", channelNum=9, keyNum=42}
+  , {controlType = "RecPlayResume", messageType="NoteOn", channelNum=9, keyNum=41}
+  , {controlType = "RecPlayStop", messageType="NoteOn", channelNum=9, keyNum=40}
 ]
 ```
 
@@ -176,3 +211,5 @@ specialInputs = [
 - [ ] Octave change
 - [x] Progress bar on Minilab3 touch pads.
 - [ ] Send some config written MIDI message at step loop timing.
+- [ ] Send predefined MIDI by touch pad.
+- [ ] Add offset to chord set's key.
