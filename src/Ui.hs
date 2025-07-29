@@ -151,7 +151,8 @@ uiMain mUiInput uiOutput devices needOutSubDev fontPath = do
       appFontDef "Regular" fontPath,
       appInitEvent AppInit,
       appDisposeEvent AppDispose,
-      appExitEvent AppExit
+      appExitEvent AppExit,
+      appRenderOnMainThread
       ]
     model = AppModel "" PlayStopped 0 0
               (unsafeInputID 0, "") (unsafeOutputID 0, "")
