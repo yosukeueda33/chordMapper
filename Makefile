@@ -15,6 +15,7 @@ PACKLINUXOBJS =  $(BINDIR)/$(BINFNAME) $(USRDIR)/assets $(USRDIR)/config ./AppDi
 			./AppDir/chordMapper.png ./AppDir/AppRun
 
 $(BINDIR):
+	mkdir -p ./AppDir
 	$(LINUXDEPLOY) --appdir ./AppDir
 
 build: $(BINDIR)
