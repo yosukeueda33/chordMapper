@@ -38,7 +38,7 @@ import Data.Map (toList)
 import Data.Word (Word8)
 import Control.Monad.State
 import Codec.Midi (Key)
-import Dhall hiding (maybe)
+import Dhall hiding (maybe, map)
 
 import Chord (Chord(..)
              , chordTonesTensionAsPassing
@@ -67,7 +67,7 @@ data ChordMapConfig
   | Deg DegreeChord
   deriving (Show, Generic)
 
-instance Interpret ChordMapConfig where
+instance FromDhall ChordMapConfig where
   autoWith _ =
     Dhall.union
       (  ( constructor "Abs" (Abs <$> Dhall.auto))
@@ -104,12 +104,12 @@ data FullConfig = FullConfig
   , specialInputs   :: [SpecialInput]
   } deriving (Show, Generic)
 
-instance Dhall.Interpret AbsoluteChord
-instance Dhall.Interpret DegreeChord
-instance Dhall.Interpret ChordMapEntry
-instance Dhall.Interpret ChordMapSet
-instance Dhall.Interpret SpecialInput
-instance Dhall.Interpret FullConfig
+instance Dhall.FromDhall AbsoluteChord
+instance Dhall.FromDhall DegreeChord
+instance Dhall.FromDhall ChordMapEntry
+instance Dhall.FromDhall ChordMapSet
+instance Dhall.FromDhall SpecialInput
+instance Dhall.FromDhall FullConfig
 
 
 mapperMain :: IO ()
