@@ -20,7 +20,7 @@
 # snapshot:
 #   url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/23/21.yaml
 
-snapshot: lts-14.27
+snapshot: lts-23.27
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -47,16 +47,14 @@ packages:
 # extra-deps: []
 extra-deps:
 - PortMidi-0.2.0.0
-- arrows-0.4.4.2
-- Stream-0.4.7.2
-- lazysmallcheck-0.6
-- monomer-1.3.0.0
+- monomer-1.6.0.1
 - nanovg-0.8.1.0
-- c2hs-0.28.8
-- language-c-0.10.0
+- sdl2-2.5.5.1
 
 # Override default flag values for project packages and extra-deps
-# flags: {}
+flags:
+  sdl2:
+    recent-ish: false
 
 # Extra package databases containing global packages
 # extra-package-dbs: []
