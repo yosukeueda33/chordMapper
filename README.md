@@ -92,6 +92,17 @@ If you built from the souce, execute this command in the cloned dir.
 make run
 ```
 
+If you get this output,
+```bash
+Setup of the rendering thread failed: Unable to make GL context current
+Falling back to rendering in the main thread. The content may not be updated while resizing the window.
+```
+this may fix the problem.
+```bash
+__GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1 ./chordMapper-x86_64.AppImage
+__GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1 make run
+```
+
 This is the UI of the chordMapper. Sorry, it's still awful.
 Select input and output device that you want to use. 
 And then, click `Play/Stop` button.
