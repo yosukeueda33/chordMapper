@@ -28,7 +28,6 @@ dependencies:
 - PortMidi
 - deepseq
 - HCodecs
-- unix
 - stm
 - time
 - containers

@@ -120,7 +120,7 @@ mapperMain = do
   checkFilePath "font" fontPath
 
   -- Load config.
-  config <- Dhall.input Dhall.auto $ T.pack cfgPath :: IO FullConfig
+  config <- Dhall.inputFile Dhall.auto cfgPath :: IO FullConfig
   print config
 
   -- Initialize buffers.

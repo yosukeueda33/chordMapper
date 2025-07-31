@@ -4,3 +4,6 @@
 [submodule "PortMidi"]
 	path = PortMidi
 	url = git@github.com:yosukeueda33/PortMidi-haskell.git
+[submodule "vty-windows"]
+	path = vty-windows
+	url = https://github.com/chhackett/vty-windows.git
