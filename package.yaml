@@ -32,13 +32,13 @@ dependencies:
 - stm
 - time
 - containers
-- monomer
 - text
 - text-show
 - lens
 - dhall
 - filepath
 - directory
+- brick
 
 ghc-options:
 - -Wall

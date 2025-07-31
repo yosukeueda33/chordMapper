@@ -45,7 +45,7 @@ import Chord (Chord(..)
              , getVoicingBetweenOn, getEnvelopeDifference
              , degreeToChord7thOnePassingTension
              , addNoMin2ndTension)
-import Ui
+import Tui
 import Types
 import ArgParse
 import Rec
@@ -135,7 +135,7 @@ mapperMain = do
              in bimap f f <$> getAllDevices :: IO ([(InputDeviceID, String)], [(OutputDeviceID, String)])
   -- UI thread.
   let needOutSubDev = isMinilab3 config
-  (uiInput, uiUpdator) <- createUiThread devices needOutSubDev $ T.pack fontPath
+  (uiInput, uiUpdator) <- createTuiThread devices needOutSubDev
   initializeMidi
   -- Wait and execute UI input.
   let

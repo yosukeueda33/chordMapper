@@ -47,14 +47,9 @@ packages:
 # extra-deps: []
 extra-deps:
 - PortMidi-0.2.0.0
-- monomer-1.6.0.1
-- nanovg-0.8.1.0
-- sdl2-2.5.5.1
 
 # Override default flag values for project packages and extra-deps
-flags:
-  sdl2:
-    recent-ish: false
+# flags: []
 
 # Extra package databases containing global packages
 # extra-package-dbs: []
