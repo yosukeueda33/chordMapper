@@ -34,6 +34,7 @@ snapshot: lts-23.27
 packages:
 - .
 - ./Euterpea2
+- ./PortMidi
 
 # Dependency packages to be pulled from upstream that are not in the snapshot.
 # These entries can reference officially published versions as well as
@@ -45,8 +46,7 @@ packages:
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
 # extra-deps: []
-extra-deps:
-- PortMidi-0.2.0.0
+# extra-deps:
 
 # Override default flag values for project packages and extra-deps
 # flags: []
