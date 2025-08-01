@@ -38,6 +38,11 @@ dependencies:
 - filepath
 - directory
 - brick
+- microlens
+- microlens-th
+- microlens-mtl
+- vty
+- vector
 
 ghc-options:
 - -Wall
