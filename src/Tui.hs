@@ -3,6 +3,8 @@
 
 module Tui where
 
+import Data.Bool (bool)
+import Data.Maybe (fromJust)
 import Control.Concurrent
 import Control.Concurrent.STM
 import qualified Data.List as L
@@ -49,6 +51,7 @@ data St = St { _chordName :: String
              , _inputList :: WL.List Name String
              , _outputList :: WL.List Name String
              , _specialList :: WL.List Name String
+             , _playing :: Bool
              }
 
 makeLenses ''St
@@ -70,22 +73,32 @@ drawUi st = L.singleton
     renderFunc sel e = rowHigh $ strWrap e
       where rowHigh = if sel then withAttr (attrName "rowHighlight") else id
       
-appEvent :: T.BrickEvent Name e -> T.EventM Name St ()
-appEvent ev@(T.MouseDown n _ _ loc) = return ()
-appEvent (T.MouseUp {}) = return ()
-appEvent (T.VtyEvent (V.EvMouseUp {})) = return ()
-appEvent (T.VtyEvent (V.EvKey V.KLeft [])) = selectListIndex %= (\i -> max 0 (i - 1))
-appEvent (T.VtyEvent (V.EvKey V.KRight [])) = selectListIndex %= (\i -> min 2 (i + 1))
-appEvent (T.VtyEvent (V.EvKey V.KEsc [])) = M.halt
-appEvent (T.VtyEvent ev) = do
-  nowCol <- use selectListIndex
-  let targetList = case nowCol of
-                     0 -> inputList
-                     1 -> outputList
-                     2 -> specialList
-                     _ -> inputList
-  T.zoom targetList $ WL.handleListEvent ev
-appEvent _ = return ()
+appEvent :: (Int -> Int -> Int -> IO ())
+         -> IO () -> T.BrickEvent Name e -> T.EventM Name St ()
+appEvent start stop (T.VtyEvent e) = case e of
+  (V.EvKey V.KLeft []) -> selectListIndex %= (\i -> max 0 (i - 1))
+  (V.EvKey V.KRight []) -> selectListIndex %= (\i -> min 2 (i + 1))
+  (V.EvKey (V.KChar ' ') []) ->
+    use playing >>= bool
+                      (do
+                        inId <- use $ inputList . WL.listSelectedL
+                        outId <- use $ outputList . WL.listSelectedL
+                        spId <- use $ specialList . WL.listSelectedL
+                        liftIO $ start (fromJust inId)
+                                       (fromJust outId)
+                                       (fromJust spId)
+                        playing %= const True)
+                      (liftIO stop >> playing %= const False)
+  (V.EvKey V.KEsc []) -> M.halt
+  ev -> do
+                      nowCol <- use selectListIndex
+                      let targetList = case nowCol of
+                                         0 -> inputList
+                                         1 -> outputList
+                                         2 -> specialList
+                                         _ -> inputList
+                      T.zoom targetList $ WL.handleListEvent ev
+appEvent _ _ _ =  return ()
 
 aMap :: AttrMap
 aMap = attrMap V.defAttr
@@ -93,28 +106,30 @@ aMap = attrMap V.defAttr
     , (attrName "rowHighlight",   V.white `on` V.magenta)
     ]
 
-app :: M.App St e Name
-app =
+app :: (Int -> Int -> Int -> IO ()) -> IO () -> M.App St e Name
+app start stop =
     M.App { M.appDraw = drawUi
           , M.appChooseCursor = M.showFirstCursor
           , M.appStartEvent = do
               vty <- M.getVtyHandle
               liftIO $ V.setMode (V.outputIface vty) V.Mouse True
-          , M.appHandleEvent = appEvent
+          , M.appHandleEvent = appEvent start stop
           , M.appAttrMap = const aMap
           }
 
-tuiMain :: DeviceLists -> MVar UiInput -> IO ()
-tuiMain devices mUiInput = do
+tuiMain :: DeviceLists
+        -> (Int -> Int -> Int -> IO ()) -> IO () -> IO () -> IO ()
+tuiMain devices start stop exit = do
   let
     inputs = Vec.fromList . map (\(id, name) -> show id ++ ": " ++ name) $ fst devices 
     outputs = Vec.fromList . map (\(id, name) -> show id ++ ": "++ name) $ snd devices 
     specials = outputs
-  _ <- M.defaultMain app $ St "" 0 0 0
+  _ <- M.defaultMain (app start stop) $ St "" 0 0 0
                              (WL.list InputList inputs 5)
                              (WL.list OutputList outputs 5)
                              (WL.list SpecialList specials 5)
-  putMVar mUiInput UiExit  
+                             False
+  exit
 
 createTuiThread :: DeviceLists -> Bool -> IO (IO UiInput, UiUpdator)
 createTuiThread devices needOutSubDev = do 
@@ -122,7 +137,15 @@ createTuiThread devices needOutSubDev = do
   tChordName' <- newTVarIO ""
   tClockProgress' <- newTVarIO 0
   tChordSetProgress' <- newTVarIO 0
-  _ <- forkIO $ tuiMain devices mUiInput
+  _ <- forkIO $ tuiMain devices
+                  (\inIx outIx spIx -> 
+                    let
+                      inId = fst $ fst devices !! inIx
+                      outId = fst $ snd devices !! outIx
+                      mSpId = Just . fst $ snd devices !! spIx
+                    in putMVar mUiInput $ UiStart inId outId mSpId)
+                  (putMVar mUiInput UiStop)
+                  (putMVar mUiInput UiExit)
   let
     uiInput = takeMVar mUiInput
     updateTVar tx = maybe (return ()) (atomically . writeTVar tx)
