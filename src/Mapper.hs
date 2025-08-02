@@ -148,12 +148,12 @@ mapperMain = do
           --Start Midi threads.
           _ <- forkIO $ mainLoop loopExitSig loopExitDoneSig
                         uiUpdator config inDev outDev mbOutSubDev
-          putStrLn "Loop Started."
+          -- putStrLn "Loop Started."
           loop -- Keep listening.
         UiStop -> do
           putMVar loopExitSig ()
           takeMVar loopExitDoneSig
-          putStrLn "Loop Stop Done."
+          -- putStrLn "Loop Stop Done."
           putMVar loopExitDoneSig ()
           loop -- Keep listening.
         UiExit -> do
@@ -181,14 +181,14 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
     tChordStep <- newTVarIO 0
     preStopSig <- newTVarIO False
     stopSig <- newTVarIO False
-    putStrLn "Clearing MIDI Devices..."
+    -- putStrLn "Clearing MIDI Devices..."
     wait 0.5
     (getRecData, recorder, getMsgToStop, recStart, recPlayResume, recPlayStop)
       <- createRecPlay tChordMap (fromIntegral $ recStepNum config)
     let
       qnSec = oneQnSec config
       op = do
-        putStrLn "Initializing MIDI Devices..."
+        -- putStrLn "Initializing MIDI Devices..."
         _ <- forkIO $ clockLoop qnSec tChordMapSet tChordMap
                         genBuf preStopSig tChordStep uiUpdator
                         (fromIntegral $ clockOffset config)
@@ -208,19 +208,19 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
                         tPushingKeys tChordMap stopSig -- poll input and add to buffer
         _ <- forkIO $ controlReceiver stopSig tControl -- For Special Input
                         [ ( NextChordMapSet
-                          ,  putStrLn "Chord map change registered!"
-                              >> changeChordMapSet
+                          ,  -- putStrLn "Chord map change registered!"
+                              changeChordMapSet
                                   tChordMapSet tChordMapSetIndex
                                   (chordMapSetList config))
                         , ( RecStart
-                          ,  putStrLn "Rec Start!"
-                             >> recStart)
+                          ,  -- putStrLn "Rec Start!"
+                             recStart)
                         , ( RecPlayResume
-                          ,  putStrLn "Rec Play Resume!"
-                             >> recPlayResume)
+                          ,  -- putStrLn "Rec Play Resume!"
+                             recPlayResume)
                         , ( RecPlayStop
-                          ,  putStrLn "Rec Play Stop!"
-                               >> recPlayStop
+                          ,  -- putStrLn "Rec Play Stop!"
+                               recPlayStop
                                >> atomically
                                     ( readTVar tChordStep
                                       >>= getMsgToStop
@@ -244,21 +244,21 @@ mainLoop exitSig exitDoneSig uiUpdator config inDev outDev mbOutSubDev = do
               return (length vals)
           mergedSendOut ellapsed = sum <$> mapM ($ ellapsed) [sendOut, sendSubOut]
         _ <- forkIO (midiOutRec 0.0 mergedSendOut stopSig) -- take from buffer and output
-        putStrLn "MIDI I/O services started."
+        -- putStrLn "MIDI I/O services started."
         detectExitLoop stopSig -- should only exit this via handleCtrlC
       closeOp = do
         atomically $ writeTVar preStopSig True -- signal the other threads to stop
-        putStrLn "Stopping clock signal" -- not clear why Ctrl+C is needed again
+        -- putStrLn "Stopping clock signal" -- not clear why Ctrl+C is needed again
         wait 1.0
         atomically $ writeTVar stopSig True -- signal the other threads to stop
-        putStrLn "Stopping MIDI devices" -- not clear why Ctrl+C is needed again
+        -- putStrLn "Stopping MIDI devices" -- not clear why Ctrl+C is needed again
         wait 2.0 -- give the other threads time to stop before closing down MIDI!
-        putStrLn "before terminating..."
+        -- putStrLn "before terminating..."
         wait 0.5 -- give MIDI time to close down
         putMVar exitDoneSig ()
     _ <- forkIO op
     takeMVar exitSig
-    putStrLn "Got exit"
+    -- putStrLn "Got exit"
     closeOp
 
 -- Invoke tasks by special inputs like tapping pads.
@@ -370,7 +370,7 @@ clockLoop qnSec tChordMapSet tChordMap genBuf preStopSig tChordStep uiUpdator
     _ <- execStateT loop 0
     sendStop
     uiUpdator (Just "", Just 0, Just 0)
-    putStrLn "closed clock"
+    -- putStrLn "closed clock"
 
 type ChordMap = (Int, String, ChordKeyMap)
 
@@ -510,8 +510,8 @@ specialInput tControl cfgs msg =
         isSameNoteOn _ _ = False
       in
         when (isSameNoteOn cfgMsg msg) $ do
-          putStrLn "got special input."
-          print msg
+          -- putStrLn "got special input."
+          -- print msg
           atomically . writeTVar tControl $ Just control
         
   in mapM_ f cfgs
