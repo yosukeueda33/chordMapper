@@ -61,28 +61,23 @@ makeLenses ''St
 
 drawUi :: St -> [Widget Name]
 drawUi st = L.singleton
-          $ C.vCenterLayer $
-              C.hCenterLayer
-                (hBox [
-                        colHigh 0 (str "Select Input:") <=>
-                          WL.renderList renderFunc True (st^.inputList)
-                     ,  colHigh 1 (str "Select Output:") <=>
-                          WL.renderList renderFunc True (st^.outputList)
-                     ,  colHigh 2 (str "Select Special output:") <=>
-                          WL.renderList renderFunc True (st^.specialList)
-                     ]) <=>
-              C.hCenterLayer
-                (strWrap $ "Chord             : " ++ st^.chordName ) <=>
-              C.hCenterLayer
-                (strWrap $ "Chord set progress: "
-                  ++ concat (replicate (st^.chordSetProgress) "■")) <=>
-              C.hCenterLayer (strWrap $ "Chord progress    : "
-                  ++ concat (replicate (st^.clockProgress `div` 6) "⬤")) <=>
-              C.hCenterLayer
-                (withAttr (attrName "info")
-                  . strWrap $ "Left/Right: Select device type."
-                              ++ "  Up/Down: Select device."
-                              ++ "  Space: Start/Stop playing.")
+          $ hBox [
+                      colHigh 0 (str "Select Input:") <=>
+                        WL.renderList renderFunc True (st^.inputList)
+                   ,  colHigh 1 (str "Select Output:") <=>
+                        WL.renderList renderFunc True (st^.outputList)
+                   ,  colHigh 2 (str "Select Special output:") <=>
+                        WL.renderList renderFunc True (st^.specialList)
+                   ] <=>
+            strWrap ( "Chord             : " ++ st^.chordName ) <=>
+            strWrap ( "Chord set progress: "
+              ++ concat (replicate (st^.chordSetProgress) "o")) <=>
+            strWrap ( "Chord progress    : "
+              ++ concat (replicate (st^.clockProgress `div` 6) "o")) <=>
+            (withAttr (attrName "info")
+              . strWrap $ "Left/Right: Select device type."
+                          ++ "  Up/Down: Select device."
+                          ++ "  Space: Start/Stop playing.")
   where
     colHigh i = if i == st^.selectListIndex then withAttr (attrName "colHighlight") else id
     renderFunc sel e = rowHigh $ strWrap e
