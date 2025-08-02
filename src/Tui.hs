@@ -59,15 +59,19 @@ makeLenses ''St
 drawUi :: St -> [Widget Name]
 drawUi st = L.singleton
           $ C.vCenterLayer $
-              C.hCenterLayer $
-                hBox [
+              C.hCenterLayer
+                (hBox [
                         colHigh 0 (str "Select Input:") <=>
                           WL.renderList renderFunc True (st^.inputList)
                      ,  colHigh 1 (str "Select Output:") <=>
                           WL.renderList renderFunc True (st^.outputList)
                      ,  colHigh 2 (str "Select Special output:") <=>
                           WL.renderList renderFunc True (st^.specialList)
-                     ]
+                     ]) <=>
+              C.hCenterLayer (strWrap $ "Chord             : " ++ st^.chordName ) <=>
+              C.hCenterLayer (strWrap $ "Chord set progress: " ++ concat (replicate (st^.chordSetProgress) "■")) <=>
+              C.hCenterLayer (strWrap $ "Chord progress    : " ++ concat (replicate (st^.clockProgress) "⬤")) <=>
+              C.hCenterLayer (withAttr (attrName "info") $ strWrap "Left/Right: Select device type.  Up/Down: Select device.  Space: Start/Stop playing.")
   where
     colHigh i = if i == st^.selectListIndex then withAttr (attrName "colHighlight") else id
     renderFunc sel e = rowHigh $ strWrap e
@@ -103,7 +107,8 @@ appEvent _ _ _ =  return ()
 aMap :: AttrMap
 aMap = attrMap V.defAttr
     [ (attrName "colHighlight",   V.white `on` V.cyan)
-    , (attrName "rowHighlight",   V.white `on` V.magenta)
+    , (attrName "rowHighlight",   V.white `on` V.blue)
+    , (attrName "info",           V.white `on` V.magenta)
     ]
 
 app :: (Int -> Int -> Int -> IO ()) -> IO () -> M.App St e Name
@@ -124,11 +129,16 @@ tuiMain devices start stop exit = do
     inputs = Vec.fromList . map (\(id, name) -> show id ++ ": " ++ name) $ fst devices 
     outputs = Vec.fromList . map (\(id, name) -> show id ++ ": "++ name) $ snd devices 
     specials = outputs
-  _ <- M.defaultMain (app start stop) $ St "" 0 0 0
-                             (WL.list InputList inputs 5)
-                             (WL.list OutputList outputs 5)
-                             (WL.list SpecialList specials 5)
-                             False
+  _ <- M.defaultMain (app start stop)
+        $ St { _chordName = ""
+             , _clockProgress = 0
+             , _chordSetProgress = 0
+             , _selectListIndex = 0
+             , _inputList = WL.list InputList inputs 5
+             , _outputList = WL.list OutputList outputs 5
+             , _specialList = WL.list SpecialList specials 5
+             , _playing = False
+             }
   exit
 
 createTuiThread :: DeviceLists -> Bool -> IO (IO UiInput, UiUpdator)
