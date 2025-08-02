@@ -108,7 +108,11 @@ appEvent start stop (T.VtyEvent e) = case e of
                                        (fromJust spId)
                         playing %= const True)
                       (liftIO stop >> playing %= const False)
-  (V.EvKey V.KEsc []) -> M.halt
+  (V.EvKey V.KEsc []) -> do
+                           vty <- M.getVtyHandle
+                           liftIO $ V.setMode (V.outputIface vty) V.Mouse False
+                           liftIO $ putStr "\ESC[0m\ESC[2J\ESC[H"
+                           M.halt
   ev -> do
                       nowCol <- use selectListIndex
                       let targetList = case nowCol of
