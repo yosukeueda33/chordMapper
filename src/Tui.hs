@@ -31,12 +31,15 @@ import Brick.Widgets.Core
 import qualified Brick.Widgets.List as WL
 import Euterpea.IO.MIDI.MidiIO
     ( OutputDeviceID, InputDeviceID, unsafeInputID, unsafeOutputID )
+import Brick.BChan (BChan, newBChan, writeBChan)
 
 data UiInput
   = UiStart InputDeviceID OutputDeviceID
       (Maybe OutputDeviceID) -- For like, lights on keyboard like MiniLab3 touch pads.
   | UiStop
   | UiExit
+
+data CustomEvent = ChangeChordInfo String Int Int
 
 type UiUpdator = (Maybe String, Maybe Int, Maybe Int) -> IO ()
 type DeviceLists = ([(InputDeviceID, String)], [(OutputDeviceID, String)])
@@ -68,17 +71,29 @@ drawUi st = L.singleton
                      ,  colHigh 2 (str "Select Special output:") <=>
                           WL.renderList renderFunc True (st^.specialList)
                      ]) <=>
-              C.hCenterLayer (strWrap $ "Chord             : " ++ st^.chordName ) <=>
-              C.hCenterLayer (strWrap $ "Chord set progress: " ++ concat (replicate (st^.chordSetProgress) "■")) <=>
-              C.hCenterLayer (strWrap $ "Chord progress    : " ++ concat (replicate (st^.clockProgress) "⬤")) <=>
-              C.hCenterLayer (withAttr (attrName "info") $ strWrap "Left/Right: Select device type.  Up/Down: Select device.  Space: Start/Stop playing.")
+              C.hCenterLayer
+                (strWrap $ "Chord             : " ++ st^.chordName ) <=>
+              C.hCenterLayer
+                (strWrap $ "Chord set progress: "
+                  ++ concat (replicate (st^.chordSetProgress) "■")) <=>
+              C.hCenterLayer (strWrap $ "Chord progress    : "
+                  ++ concat (replicate (st^.clockProgress `div` 6) "⬤")) <=>
+              C.hCenterLayer
+                (withAttr (attrName "info")
+                  . strWrap $ "Left/Right: Select device type."
+                              ++ "  Up/Down: Select device."
+                              ++ "  Space: Start/Stop playing.")
   where
     colHigh i = if i == st^.selectListIndex then withAttr (attrName "colHighlight") else id
     renderFunc sel e = rowHigh $ strWrap e
       where rowHigh = if sel then withAttr (attrName "rowHighlight") else id
       
 appEvent :: (Int -> Int -> Int -> IO ())
-         -> IO () -> T.BrickEvent Name e -> T.EventM Name St ()
+         -> IO () -> T.BrickEvent Name CustomEvent -> T.EventM Name St ()
+appEvent _ _ (T.AppEvent (ChangeChordInfo name clockI setI))
+                                          =  chordName %= const name
+                                          >> clockProgress %= const clockI
+                                          >> chordSetProgress %= const setI
 appEvent start stop (T.VtyEvent e) = case e of
   (V.EvKey V.KLeft []) -> selectListIndex %= (\i -> max 0 (i - 1))
   (V.EvKey V.KRight []) -> selectListIndex %= (\i -> min 2 (i + 1))
@@ -111,7 +126,7 @@ aMap = attrMap V.defAttr
     , (attrName "info",           V.white `on` V.magenta)
     ]
 
-app :: (Int -> Int -> Int -> IO ()) -> IO () -> M.App St e Name
+app :: (Int -> Int -> Int -> IO ()) -> IO () -> M.App St CustomEvent Name
 app start stop =
     M.App { M.appDraw = drawUi
           , M.appChooseCursor = M.showFirstCursor
@@ -123,13 +138,15 @@ app start stop =
           }
 
 tuiMain :: DeviceLists
-        -> (Int -> Int -> Int -> IO ()) -> IO () -> IO () -> IO ()
-tuiMain devices start stop exit = do
+        -> (Int -> Int -> Int -> IO ()) -> IO () -> IO ()
+        -> BChan CustomEvent
+        -> IO()
+tuiMain devices start stop exit varsChan = do
   let
     inputs = Vec.fromList . map (\(id, name) -> show id ++ ": " ++ name) $ fst devices 
     outputs = Vec.fromList . map (\(id, name) -> show id ++ ": "++ name) $ snd devices 
     specials = outputs
-  _ <- M.defaultMain (app start stop)
+  _ <- M.customMainWithDefaultVty (Just varsChan) (app start stop)
         $ St { _chordName = ""
              , _clockProgress = 0
              , _chordSetProgress = 0
@@ -141,12 +158,25 @@ tuiMain devices start stop exit = do
              }
   exit
 
+readVars :: BChan CustomEvent -> TVar String -> TVar Int -> TVar Int -> IO ()
+readVars varsChan tChordName tClockProgress tChordSetProgress = go 
+  where
+    go = do
+      threadDelay 100000
+      writeBChan varsChan =<< ChangeChordInfo <$> readTVarIO tChordName
+                                              <*> readTVarIO tClockProgress
+                                              <*> readTVarIO tChordSetProgress
+      go
+  
+
 createTuiThread :: DeviceLists -> Bool -> IO (IO UiInput, UiUpdator)
 createTuiThread devices needOutSubDev = do 
   mUiInput <- newEmptyMVar
-  tChordName' <- newTVarIO ""
-  tClockProgress' <- newTVarIO 0
-  tChordSetProgress' <- newTVarIO 0
+  tChordName <- newTVarIO ""
+  tClockProgress <- newTVarIO 0
+  tChordSetProgress <- newTVarIO 0
+  varsChan <- newBChan 10
+  void . forkIO $ readVars varsChan tChordName tClockProgress tChordSetProgress
   _ <- forkIO $ tuiMain devices
                   (\inIx outIx spIx -> 
                     let
@@ -156,12 +186,13 @@ createTuiThread devices needOutSubDev = do
                     in putMVar mUiInput $ UiStart inId outId mSpId)
                   (putMVar mUiInput UiStop)
                   (putMVar mUiInput UiExit)
+                  varsChan
   let
     uiInput = takeMVar mUiInput
     updateTVar tx = maybe (return ()) (atomically . writeTVar tx)
     updator (mbChordName, mbClockProgress, mbChordSetProgress)
-      =  updateTVar tChordName' mbChordName
-      >> updateTVar tClockProgress' mbClockProgress
-      >> updateTVar tChordSetProgress' mbChordSetProgress
+      =  updateTVar tChordName mbChordName
+      >> updateTVar tClockProgress mbClockProgress
+      >> updateTVar tChordSetProgress mbChordSetProgress
 
   return (uiInput, updator)
