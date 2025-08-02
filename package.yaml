@@ -28,17 +28,21 @@ dependencies:
 - PortMidi
 - deepseq
 - HCodecs
-- unix
 - stm
 - time
 - containers
-- monomer
 - text
 - text-show
 - lens
 - dhall
 - filepath
 - directory
+- brick
+- microlens
+- microlens-th
+- microlens-mtl
+- vty
+- vector
 
 ghc-options:
 - -Wall
