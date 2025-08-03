@@ -115,9 +115,8 @@ instance Dhall.FromDhall FullConfig
 mapperMain :: IO ()
 mapperMain = do
   -- Read file path.
-  (cfgPath, fontPath) <- genPath
+  cfgPath <- genPath
   checkFilePath "config" cfgPath
-  checkFilePath "font" fontPath
 
   -- Load config.
   config <- Dhall.inputFile Dhall.auto cfgPath :: IO FullConfig

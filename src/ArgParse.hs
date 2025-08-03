@@ -8,8 +8,8 @@ import Data.Functor ( (<&>) )
 import Control.Monad ( unless )
 
 
-genPath :: IO (FilePath, FilePath) 
-genPath = (,) <$> (getArgs >>= parse) <*> getFontPath
+genPath :: IO FilePath 
+genPath = getArgs >>= parse
   where
     parse :: [String] -> IO FilePath
     parse ["-h"] = usage >> exit
@@ -20,10 +20,6 @@ genPath = (,) <$> (getArgs >>= parse) <*> getFontPath
     version = putStrLn "chordMapper version 0.0"
     usage = putStrLn "Usage: chordMapper [-v|-h|CONFIG_PATH]"
     exit = exitSuccess
-    projDir = (</> "..") . takeDirectory <$> getExecutablePath 
-
-    getFontPath :: IO FilePath
-    getFontPath =  projDir <&> (</> "assets" </> "fonts" </> "Roboto-Regular.ttf")
 
 checkFilePath :: String -> FilePath -> IO ()
 checkFilePath typ path = do
