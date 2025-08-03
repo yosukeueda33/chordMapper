@@ -14,7 +14,7 @@ genPath = (,) <$> (getArgs >>= parse) <*> getFontPath
     parse :: [String] -> IO FilePath
     parse ["-h"] = usage >> exit
     parse ["-v"] = version >> exit
-    parse [] =  projDir <&> (</> "config" </> "default.dhall")
+    parse [] = usage >> exit
     parse [x] = makeAbsolute x
     parse _ = usage >> exit
     version = putStrLn "chordMapper version 0.0"
