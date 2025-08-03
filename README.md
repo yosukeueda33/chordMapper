@@ -63,12 +63,12 @@ Source  Event                  Ch  Data
 ### With binary image.
 * Under construction.
 ### From Source.
-#### Ubuntu
 You need Haskell's `stack` tool to build this tool. I recommend  `ghcup` since it includes `stack` and other useful tools for haskell development.
 
+#### Ubuntu or other Linux and Mac
 Install these dev library and tool before build.
 ```bash
-sudo apt install -y libasound2-dev libfreetype-dev libsdl2-dev libglew-dev libgl1-mesa-dev libglfw3-dev
+sudo apt install -y libasound2-dev
 
 ```
 
@@ -76,31 +76,33 @@ Build commands.
 ```bash
 git clone --recurse-submodules [URL OF THIS REPO]
 cd THIS_REPO_DIR
-wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-chmod +x linuxdeploy-x86_64.AppImage
-make build
+stack build
+```
+
+#### Windows
+Build commands.
+```bash
+git clone --recurse-submodules [URL OF THIS REPO]
+cd THIS_REPO_DIR
+stack --stack-yaml .\stack-win.yaml build
 ```
 
 ## Getting Started
-If you have binary, execute it.
+If you have binary, execute it with config path.
+Linux:
 ```bash
-./chordMapper-x86_64.AppImage
+./chordMapper-x86_64.AppImage [config dhall path like downloaded config/default.dhall]
 ```
+Mac and Windows just the same. Change exe file name.
 
 If you built from the souce, execute this command in the cloned dir.
+Linux and Mac:
 ```bash
-make run
+stack run -- [config dhall path]
 ```
-
-If you get this output,
+Windows:
 ```bash
-Setup of the rendering thread failed: Unable to make GL context current
-Falling back to rendering in the main thread. The content may not be updated while resizing the window.
-```
-this may fix the problem.
-```bash
-__GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1 ./chordMapper-x86_64.AppImage
-__GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1 make run
+stack --stack-yaml .\stack-win.yaml run -- [config dhall path]
 ```
 
 This is the UI of the chordMapper. Sorry, it's still awful.
