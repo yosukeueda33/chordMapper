@@ -106,7 +106,7 @@ appEvent start stop (T.VtyEvent e) = case e of
   (V.EvKey V.KEsc []) -> do
                            vty <- M.getVtyHandle
                            liftIO $ V.setMode (V.outputIface vty) V.Mouse False
-                           liftIO $ putStr "\ESC[0m\ESC[2J\ESC[H"
+                           liftIO $ putStr "\ESC[0m\ESC[2J\ESC[H\ESC[?25h"
                            M.halt
   ev -> do
                       nowCol <- use selectListIndex
