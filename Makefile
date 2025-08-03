@@ -11,7 +11,7 @@ help:
 # chmod +x linuxdeploy-x86_64.AppImage
 LINUXDEPLOY = ./linuxdeploy-x86_64.AppImage
 PACKITEMS = ./pack_items
-PACKLINUXOBJS =  $(BINDIR)/$(BINFNAME) $(USRDIR)/assets $(USRDIR)/config ./AppDir/$(APPNAME).desktop \
+PACKLINUXOBJS =  $(BINDIR)/$(BINFNAME) ./AppDir/$(APPNAME).desktop \
 			./AppDir/chordMapper.png ./AppDir/AppRun
 
 $(BINDIR):
@@ -22,14 +22,7 @@ build: $(BINDIR)
 	stack build &&\
 	stack install --local-bin-path=$(BINDIR)
 
-$(USRDIR)/assets: 
-	cp -r ./assets $(USRDIR)/
-
-$(USRDIR)/config: 
-	mkdir $(USRDIR)/config
-	cp -p ./config/default.dhall $(USRDIR)/config/
-
-run: $(BINDIR)/$(BINFNAME) $(USRDIR)/assets $(USRDIR)/config
+run: $(BINDIR)/$(BINFNAME)
 	$(BINDIR)/$(BINFNAME) $(ARGS)
 
 ./AppDir/$(APPNAME).desktop:
