@@ -107,6 +107,7 @@ appEvent start stop (T.VtyEvent e) = case e of
                            vty <- M.getVtyHandle
                            liftIO $ V.setMode (V.outputIface vty) V.Mouse False
                            liftIO $ putStr "\ESC[0m\ESC[2J\ESC[H\ESC[?25h"
+                           liftIO $ V.shutdown vty
                            M.halt
   ev -> do
                       nowCol <- use selectListIndex
