@@ -2,6 +2,10 @@
 
 [![Haskell CI (Stack)](https://github.com/yosukeueda33/chordMapper/actions/workflows/ci.yml/badge.svg)](https://github.com/yosukeueda33/chordMapper/actions/workflows/ci.yml)
 
+日本語のReadmeは [こちら](https://github.com/yosukeueda33/chordMapper/README_ja.md).
+
+This English Page is under construction... Translate Japanese Readme would be good to know this system.
+
 This is a MIDI controller(converter) software. It maps chord notes to each MIDI keyboard keys dynamically without out-of-chord notes. Sound's wired right? Please see the explanation video on YouTube:  
 *Under construction
 
