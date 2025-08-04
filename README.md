@@ -2,7 +2,7 @@
 
 [![Haskell CI (Stack)](https://github.com/yosukeueda33/chordMapper/actions/workflows/ci.yml/badge.svg)](https://github.com/yosukeueda33/chordMapper/actions/workflows/ci.yml)
 
-日本語のReadmeは [こちら](https://github.com/yosukeueda33/chordMapper/README_ja.md).
+日本語のReadmeは [こちら](https://github.com/yosukeueda33/chordMapper/blob/main/README_ja.md).
 
 This English Page is under construction... Translate Japanese Readme would be good to know this system.
 
