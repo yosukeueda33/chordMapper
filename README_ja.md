@@ -101,6 +101,7 @@ stack --stack-yaml .\stack-win.yaml build
 
 コンフィグに使用しているdhallファイルを修正することで使用者の好きなコード進行を指定できます。[この章](#コード進行の定義)を参考にしてください。
 
+`[VERSION NAME]`は各バージョン名に読み替えてください。
 Windows:
 ```bash
 .\chordMapper-win_[VERSION NAME].exe .\tasogare_surround.dhall
