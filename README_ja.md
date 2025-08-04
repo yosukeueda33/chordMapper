@@ -104,17 +104,24 @@ stack --stack-yaml .\stack-win.yaml build
 `[VERSION NAME]`は各バージョン名に読み替えてください。
 Windows:
 ```bash
-.\chordMapper-win_[VERSION NAME].exe .\tasogare_surround.dhall
+chordMapper-win_[VERSION NAME].exe tasogare_surround.dhall
 ```
 
 Mac:
 ```bash
+chmod +x chordMapper-mac_\[VERSION NAME\] # 初回実行時のみ
 ./chordMapper-mac_\[VERSION NAME\] ./tasogare_surround.dhall
 ```
+初回実行時には"...開いていません...検証できませんでした"との旨のポップアップが出ます。
+"完了"ボタンを押した後、以下の設定項目を許可してください。
+![sec](imgs/mac_sec_jp.png)
+次の実行でも権限系のポップアップが出ますが"そのまま開く"ボタン後、
+管理者権限のポップアップで許可対応をしてください。
+これでようやくコマンドとして実行できるようになります。
 
 Linux:
 ```bash
-chmod +x ./chordMapper-x86_64_[VERSION NAME].AppImage
+chmod +x ./chordMapper-x86_64_[VERSION NAME].AppImage # 初回実行時のみ
 ./chordMapper-x86_64_[VERSION NAME].AppImage ./tasogare_surround.dhall
 ```
 
