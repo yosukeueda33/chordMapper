@@ -6,7 +6,10 @@ English readme is [here](https://github.com/yosukeueda33/chordMapper).
 
 **KANNASHI chordMapper** は、ピアノや音楽の知識をそれほど使用せずに感覚のみでの即興演奏を可能とするツールです。
 すべての鍵盤入力をコード(和音)構成音に変換する仕組みにより、誰でも音を外さずに即興演奏を楽しめます。 
-詳細はYouTube動画（※準備中）をご覧ください。
+雰囲気はYouTube動画をご覧ください。
+[Youtubeリンク](https://youtu.be/kBlj11tS-cg)
+
+
 
 このツールはWindows,Mac,Linuxなどのデスクトップ環境で動作するMIDIコントローラソフトです。
 実行ファイルとして公開をしており、githubページの[Releases](https://github.com/yosukeueda33/chordMapper/releases)から
