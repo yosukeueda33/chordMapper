@@ -15,7 +15,7 @@ jobs:
         submodules: recursive
 
     - name: Install system dependencies
-      run: sudo apt install -y libasound2-dev libfreetype-dev libsdl2-dev libglew-dev libgl1-mesa-dev libglfw3-dev
+      run: sudo apt install -y libasound2-dev
  
     - name: Set up Haskell
       uses: haskell-actions/setup@v2
