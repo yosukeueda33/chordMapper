@@ -189,7 +189,7 @@ recStepNum = 24*4  -- 打鍵録音機能の録音MIDIクロック数(MIDIクロ�
 `chordMapSetList`でコード進行を設定できます。
 以下例の1番めの`chordMapSet`は黄昏サラウンドのコード進行を設定しています。
 `durationCnf`はコード単体ごとの割当て時間、`chordCnf`は`getAbsChord`でコードのルートとコードの種類を設定しています。
-`getAbsChord`右に空白をはさみながらコード種類を表現します。1要素目は"C","Fs","Bf"などのように`ルート音の大文字+[s(シャープ) or f(フラット)]`としてコードのルート音を記述し、2要素目はコードタイプとして"Major7th"、"Minor7th"、"ChMinor7thFlat5"など記述してください。  
+`getAbsChord`右に空白をはさみながらコード種類を表現します。1要素目は"C","Fs","Bf"などのように`ルート音の大文字+[s(シャープ) or f(フラット)]`としてコードのルート音を記述し、2要素目はコードタイプとして"Major7th"、"Minor7th"、"Minor7thFlat5"など記述してください。  
   
 2番めの`chordMapSet`は`getDegChord`によりディグリー表記でコード進行を表現しています。
 `getDegChord "C" "Major" 2`はCメジャーのIIを示しています。1要素目は上記と同様"C","Fs","Bf"での指定ができます。
