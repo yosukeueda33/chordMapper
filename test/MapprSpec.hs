@@ -34,3 +34,17 @@ spec = do
         pushingKeyMap = DMap.fromList [(20, [60])]
         msg = NoteOff 0 20 0
       applyChordMap chordKeyMap pushingKeyMap msg `shouldBe` [NoteOff 0 60 0]
+
+    it "NoteOn message that pitch is already ON PushingKeyMap should be passed. And NoteOff old one." $ do
+      let
+        chordKeyMap _ = Just [60]
+        pushingKeyMap = DMap.fromList [(20, [60])]
+        msg = NoteOn 0 21 0
+      applyChordMap chordKeyMap pushingKeyMap msg `shouldBe` [NoteOff 0 60 0, NoteOn 0 60 0]
+
+    it "NoteOff message that pitch is already ON PushingKeyMap and DIFFERENT input key should NOT be passed." $ do
+      let
+        chordKeyMap _ = Just [60]
+        pushingKeyMap = DMap.fromList [(20, [60])]
+        msg = NoteOff 0 21 0
+      applyChordMap chordKeyMap pushingKeyMap msg `shouldBe` []

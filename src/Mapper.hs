@@ -542,20 +542,23 @@ midiInRec inDev inBuf subInRec tPushingKeys tChordMap stopSignal = do
 imply :: Bool -> Bool -> Bool
 imply x y = not x || y
 
--- apply ChordMap to message.
+-- Apply ChordMap to message.
 -- The output is List because it can be multiple keys for playing chord with one key.
+-- It cares pitch collision case that causes unintended NoteOff and keeping NoteOn.
 applyChordMap :: ChordKeyMap -> PushingKeyMap -> Message -> [Message]
-applyChordMap chordKeyMap _ (NoteOn ch kEy vel) = do
-  k <- fromMaybe [] $ chordKeyMap kEy
-  return $ NoteOn ch k vel
-applyChordMap chordKeyMap pushingKeyMap (NoteOff ch kEy vel) = do
-  k <- fromMaybe [] $ Map.lookup kEy pushingKeyMap
-  -- Cancel OFF except last one when there multiple ON.
-  let pushingCount
-        = length . filter (k ==). concatMap snd $ toList pushingKeyMap
-  guard $ isJust ( chordKeyMap kEy) `imply` (pushingCount == 1)
-  return $ NoteOff ch k vel
-applyChordMap _ _ m = return m
+applyChordMap chordKeyMap pkMap msg = case msg of
+  (NoteOn ch kEy vel) -> do
+      k <- fromMaybe [] $ chordKeyMap kEy
+      if k `elem` concat (Map.elems pkMap) then [NoteOff ch k vel, NoteOn ch k vel]
+      else [NoteOn ch k vel]
+  (NoteOff ch kEy vel) -> do
+    k <- fromMaybe [] $ Map.lookup kEy pkMap
+    -- Cancel OFF except last one when there multiple ON.
+    let pushingCount
+          = length . concatMap (filter (k ==). snd) $ toList pkMap
+    guard $ isJust ( chordKeyMap kEy) `imply` (pushingCount == 1)
+    return $ NoteOff ch k vel
+  m -> return m
 
 -- Record input key and mapped key to track and NoteOff key that on previous ChordMap.
 updatePushingKeys :: TVar ChordKeyMap -> TVar PushingKeyMap -> [Message] -> STM ()
