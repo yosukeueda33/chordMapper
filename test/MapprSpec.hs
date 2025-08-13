@@ -2,8 +2,12 @@ module MapprSpec (spec) where
 
 import Test.Hspec
 import Test.QuickCheck
-import Mapper (getKeyMap)
+import Mapper (getKeyMap, applyChordMap)
 import Data.Maybe (fromJust)
+import Data.List
+import qualified Data.Map as DMap
+import qualified Control.Lens.Internal.Deque as Map
+import Euterpea
 
 spec :: Spec
 spec = do
@@ -16,3 +20,17 @@ spec = do
       property . forAll ((,) <$> chordToneRange <*> inputRange)
                $ \(xs, x) -> all (flip elem (map normalize xs) . normalize)
                            . fromJust $ getKeyMap xs x 
+
+    it "NoteON message that pitch is NOT ON PushingKeyMap should be passed." $ do
+      let
+        chordKeyMap _ = Just [60]
+        pushingKeyMap = DMap.fromList [(20, [61])]
+        msg = NoteOn 0 21 0
+      applyChordMap chordKeyMap pushingKeyMap msg `shouldBe` [NoteOn 0 60 0]
+
+    it "NoteOff message that pitch is ON PushingKeyMap and SAME input key should be passed." $ do
+      let
+        chordKeyMap _ = Just [60]
+        pushingKeyMap = DMap.fromList [(20, [60])]
+        msg = NoteOff 0 20 0
+      applyChordMap chordKeyMap pushingKeyMap msg `shouldBe` [NoteOff 0 60 0]
