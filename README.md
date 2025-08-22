@@ -5,7 +5,7 @@
 日本語のReadmeは [こちら](https://github.com/yosukeueda33/chordMapper/blob/main/README_ja.md).
 
 This is a MIDI controller(converter) software. It maps chord notes to every MIDI keyboard keys and the chords changes by time. So, you can improvise on chord without knowing what key is what pitch. Please see the explanation video on YouTube:  
-*Under construction
+*Under construction. Only Japanese version [here](https://youtu.be/kBlj11tS-cg).
 
 \* The KANNASHI is a Kumamoto prefecture dialect. That means "Not knowing the limits" or "thoughtless".
 
